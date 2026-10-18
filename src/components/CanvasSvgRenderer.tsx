@@ -218,6 +218,8 @@ function GdgBracketLogo({
   withLabel = false,
   labelColor = '#1e1e1e',
   chapterText = 'Google Developer Groups',
+  customLogoUrl,
+  customLogoScale = 1,
 }: {
   x: number;
   y: number;
@@ -227,8 +229,26 @@ function GdgBracketLogo({
   withLabel?: boolean;
   labelColor?: string;
   chapterText?: string;
+  customLogoUrl?: string;
+  customLogoScale?: number;
 }) {
   const sw = strokeWidth / scale;
+  if (customLogoUrl) {
+    const imgW = 120 * customLogoScale;
+    const imgH = 52 * customLogoScale;
+    return (
+      <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+        <image
+          href={customLogoUrl}
+          x={43 - imgW / 2}
+          y={20 - imgH / 2}
+          width={imgW}
+          height={imgH}
+          preserveAspectRatio="xMidYMid meet"
+        />
+      </g>
+    );
+  }
   return (
     <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
       {/* Left bracket < : Red upper arm + Blue lower arm */}
@@ -539,6 +559,24 @@ function DevFestBracketLockup({
   strokeWidth: number;
   compact?: boolean;
 }) {
+  if (eventMeta.devfestLogoDataUrl) {
+    const logoScale = eventMeta.devfestLogoScale || 1;
+    const imgW = 340 * logoScale;
+    const imgH = 104 * logoScale;
+    return (
+      <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+        <image
+          href={eventMeta.devfestLogoDataUrl}
+          x={0}
+          y={4}
+          width={imgW}
+          height={imgH}
+          preserveAspectRatio="xMinYMid meet"
+        />
+      </g>
+    );
+  }
+
   const sw = strokeWidth / scale;
   const titleText = eventMeta.eventTitle || 'DevFest';
   const locText = eventMeta.locationText || 'Seoul';
@@ -698,6 +736,8 @@ function TrackAtDevFestLockup({
   colorway,
   strokeWidth,
   textColorOverride,
+  customLogoUrl,
+  customLogoScale = 1,
 }: {
   x: number;
   y: number;
@@ -708,7 +748,26 @@ function TrackAtDevFestLockup({
   colorway: DevFestColorway;
   strokeWidth: number;
   textColorOverride?: string;
+  customLogoUrl?: string;
+  customLogoScale?: number;
 }) {
+  if (customLogoUrl) {
+    const imgW = 340 * customLogoScale;
+    const imgH = 104 * customLogoScale;
+    return (
+      <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+        <image
+          href={customLogoUrl}
+          x={0}
+          y={4}
+          width={imgW}
+          height={imgH}
+          preserveAspectRatio="xMinYMid meet"
+        />
+      </g>
+    );
+  }
+
   const sw = strokeWidth / scale;
   const headingColor = textColorOverride || colorway.ink;
   const locW = Math.max(108, locationText.length * 14 + 36);
@@ -985,6 +1044,8 @@ export default function CanvasSvgRenderer({
             colorway={colorway}
             strokeWidth={sw}
             textColorOverride={canvasTextColor}
+            customLogoUrl={eventMeta.devfestLogoDataUrl}
+            customLogoScale={eventMeta.devfestLogoScale || 1}
           />
 
           <DoubleSlashGlyph
@@ -1160,6 +1221,8 @@ export default function CanvasSvgRenderer({
             scale={u * 1.0}
             strokeColor={colorway.ink}
             strokeWidth={sw}
+            customLogoUrl={eventMeta.gdgLogoDataUrl}
+            customLogoScale={eventMeta.gdgLogoScale || 1}
           />
         </g>
       );
@@ -1291,6 +1354,8 @@ export default function CanvasSvgRenderer({
               colorway={colorway}
               strokeWidth={sw}
               textColorOverride={canvasTextColor}
+              customLogoUrl={eventMeta.devfestLogoDataUrl}
+              customLogoScale={eventMeta.devfestLogoScale || 1}
             />
           )}
 
@@ -1461,6 +1526,8 @@ export default function CanvasSvgRenderer({
             scale={u * 1.05}
             strokeColor={colorway.ink}
             strokeWidth={sw}
+            customLogoUrl={eventMeta.gdgLogoDataUrl}
+            customLogoScale={eventMeta.gdgLogoScale || 1}
           />
         </g>
       );
@@ -1575,6 +1642,8 @@ export default function CanvasSvgRenderer({
               colorway={colorway}
               strokeWidth={sw}
               textColorOverride={canvasTextColor}
+              customLogoUrl={eventMeta.devfestLogoDataUrl}
+              customLogoScale={eventMeta.devfestLogoScale || 1}
             />
             <DoubleSlashGlyph
               x={W - pad - 110 * u}
@@ -1627,6 +1696,8 @@ export default function CanvasSvgRenderer({
           scale={u * 1.0}
           strokeColor={colorway.ink}
           strokeWidth={sw}
+          customLogoUrl={eventMeta.gdgLogoDataUrl}
+          customLogoScale={eventMeta.gdgLogoScale || 1}
         />
 
         {/* Bottom Speaker & Session Info White Card */}
@@ -1829,6 +1900,8 @@ export default function CanvasSvgRenderer({
             colorway={colorway}
             strokeWidth={sw}
             textColorOverride={canvasTextColor}
+            customLogoUrl={eventMeta.devfestLogoDataUrl}
+            customLogoScale={eventMeta.devfestLogoScale || 1}
           />
 
           {/* Rightmost motif in top cutout: Double Slash // or Scallop Arches */}
@@ -2161,6 +2234,8 @@ export default function CanvasSvgRenderer({
           scale={u * 1.0}
           strokeColor={colorway.ink}
           strokeWidth={sw}
+          customLogoUrl={eventMeta.gdgLogoDataUrl}
+          customLogoScale={eventMeta.gdgLogoScale || 1}
         />
 
         <CaterpillarBlob
