@@ -1,182 +1,147 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
+import CanvasSvgRenderer from '@/components/CanvasSvgRenderer';
 import {
-  Download,
-  FileCode,
-  FolderUp,
-  Image as ImageIcon,
-  Layers,
-  LayoutTemplate,
-  Palette,
-  Plus,
-  Printer,
-  RefreshCw,
-  Share2,
-  Sparkles,
-  Trash2,
-  Upload,
-  UserPlus,
-  Users,
-  Wand2,
-  ZoomIn,
-  ZoomOut,
-  Cloud,
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  Sliders,
-  Calendar,
-} from 'lucide-react';
-import {
-  AssetCategory,
-  BaseAssetItem,
-  BaseAssetType,
-  CanvasPreset,
-  DesignSystemTokens,
-  EventInfo,
-  ExportFormat,
-  ExportOptions,
-  LayoutTemplateId,
-  PatternStyleType,
-  PhotoFilterType,
-  ShadowStyleType,
-  SpeakerFrameShape,
-  SpeakerProfile,
-} from '@/types/studio';
-import {
-  CANVAS_PRESETS,
-  DEFAULT_BASE_ASSETS,
-  DEFAULT_EVENT_INFO,
-  DEFAULT_SPEAKERS,
-  DESIGN_SYSTEM_PRESETS,
+  DEVFEST_COLORWAYS,
+  INITIAL_EVENT_META,
+  INITIAL_SPEAKER_SESSIONS,
+  SAMPLE_PORTRAITS,
+  SIZE_PRESETS,
 } from '@/data/presets';
-import { CanvasSvgRenderer } from './CanvasSvgRenderer';
+import {
+  AssetMode,
+  DevFestColorwayId,
+  DevFestEventMeta,
+  ExportFormat,
+  PhotoFilterType,
+  SpeakerSessionItem,
+  SpeakerTemplateVariant,
+  TimetableTemplateVariant,
+} from '@/types/studio';
+import { downloadSampleXlsx, parseUploadedSpeakerExcel } from '@/utils/excel';
 import { exportSvgElement } from '@/utils/exportAsset';
 
-type ActiveTab = 'speaker' | 'assets' | 'design-system' | 'event';
-
-const LAYOUT_OPTIONS: { id: LayoutTemplateId; label: string; badge: string }[] = [
-  { id: 'speaker-card', label: '연사자 스포트라이트 카드', badge: 'SNS 최적' },
-  { id: 'session-banner', label: '세션 와이드 홍보 배너', badge: '16:9 / OG' },
-  { id: 'main-poster', label: '행사 메인 홍보 포스터', badge: 'SNS / A2' },
-  { id: 'x-banner', label: 'X배너 스탠드 (600×1800mm)', badge: '인쇄 전용' },
-  { id: 'pamphlet-trifold', label: '3단 접지 팜플렛 / 리플렛', badge: '인쇄 전용' },
-  { id: 'nametag-badge', label: '연사자 네임택 / 패스 배지', badge: '인쇄 전용' },
-];
-
-export const DesignStudioWorkspace: React.FC = () => {
+export function DesignStudioWorkspace() {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const excelInputRef = useRef<HTMLInputElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const batchPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Studio Core State
-  const [activeCategory, setActiveCategory] = useState<AssetCategory>('sns');
-  const [selectedPreset, setSelectedPreset] = useState<CanvasPreset>(CANVAS_PRESETS[0]);
-  const [selectedLayout, setSelectedLayout] = useState<LayoutTemplateId>(
-    CANVAS_PRESETS[0].defaultLayout
+  // 1. Canvas Size State: Draft numeric inputs vs. Generated canvas size
+  const [inputWidth, setInputWidth] = useState<string>('800');
+  const [inputHeight, setInputHeight] = useState<string>('1000');
+  const [canvasWidth, setCanvasWidth] = useState<number>(800);
+  const [canvasHeight, setCanvasHeight] = useState<number>(1000);
+  const [activePresetId, setActivePresetId] = useState<string>('custom-800x1000');
+  const [lastGeneratedAt, setLastGeneratedAt] = useState<string>('800 × 1000 px');
+
+  // 2. Asset Mode & Official DevFest 2026 Template Variant
+  const [mode, setMode] = useState<AssetMode>('speaker');
+  const [speakerVariant, setSpeakerVariant] =
+    useState<SpeakerTemplateVariant>('devfest-bracket');
+  const [timetableVariant, setTimetableVariant] =
+    useState<TimetableTemplateVariant>('agenda-digital');
+  const [colorwayId, setColorwayId] = useState<DevFestColorwayId>('pastel-blue');
+
+  // 3. Speakers / Sessions Data (populated initially & via Excel upload)
+  const [sessions, setSessions] = useState<SpeakerSessionItem[]>(
+    INITIAL_SPEAKER_SESSIONS
   );
-  const [designSystem, setDesignSystem] = useState<DesignSystemTokens>(
-    DESIGN_SYSTEM_PRESETS[0]
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string>(
+    INITIAL_SPEAKER_SESSIONS[0].id
   );
+  const [excelStatusMsg, setExcelStatusMsg] = useState<string | null>(null);
 
-  // Speakers State
-  const [speakers, setSpeakers] = useState<SpeakerProfile[]>(DEFAULT_SPEAKERS);
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string>(DEFAULT_SPEAKERS[0].id);
+  // 4. Event Header Metadata
+  const [eventMeta, setEventMeta] = useState<DevFestEventMeta>(INITIAL_EVENT_META);
 
-  // Base Assets State
-  const [baseAssets, setBaseAssets] = useState<BaseAssetItem[]>(DEFAULT_BASE_ASSETS);
-  const [uploadAssetType, setUploadAssetType] = useState<BaseAssetType>('logo');
-
-  // Event Info State
-  const [eventInfo, setEventInfo] = useState<EventInfo>(DEFAULT_EVENT_INFO);
-
-  // UI & Viewport State
-  const [activeTab, setActiveTab] = useState<ActiveTab>('speaker');
-  const [zoom, setZoom] = useState<number>(0.48);
-  const [showPrintGuides, setShowPrintGuides] = useState<boolean>(false);
-
-  // Export State
-  const [exportOptions, setExportOptions] = useState<ExportOptions>({
-    format: 'png',
-    scale: 2,
-    quality: 0.95,
-    includePrintGuides: false,
-    transparentBg: false,
-  });
+  // 5. Export & Zoom Controls
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('png');
+  const [exportScale, setExportScale] = useState<1 | 2 | 3>(1);
   const [isExporting, setIsExporting] = useState<boolean>(false);
-  const [statusToast, setStatusToast] = useState<string | null>(null);
+  const [zoomPercent, setZoomPercent] = useState<number>(100);
 
-  // Design System JSON Injection & AI Prompt State
-  const [showJsonModal, setShowJsonModal] = useState<boolean>(false);
-  const [jsonInputText, setJsonInputText] = useState<string>('');
-  const [aiThemePrompt, setAiThemePrompt] = useState<string>('');
-  const [isAiGenerating, setIsAiGenerating] = useState<boolean>(false);
-
-  // GCP Status Modal State
-  const [showGcpModal, setShowGcpModal] = useState<boolean>(false);
-  const [gcpStatus, setGcpStatus] = useState<{
-    connected: boolean;
-    environment: string;
-    gcp?: {
-      projectId: string;
-      region: string;
-      gcsBucket: string;
-      vertexAiReady: boolean;
-    };
-  } | null>(null);
+  const activeColorway =
+    DEVFEST_COLORWAYS.find((c) => c.id === colorwayId) || DEVFEST_COLORWAYS[0];
 
   const activeSpeaker =
-    speakers.find((s) => s.id === selectedSpeakerId) || speakers[0];
+    sessions.find((s) => s.id === selectedSpeakerId) || sessions[0];
 
-  const showToast = (msg: string) => {
-    setStatusToast(msg);
-    setTimeout(() => {
-      setStatusToast((prev) => (prev === msg ? null : prev));
-    }, 3500);
+  // Apply numeric W x H and reflow template when clicking "Generate"
+  const handleGenerateBySize = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const parsedW = Math.min(6000, Math.max(320, parseInt(inputWidth, 10) || 800));
+    const parsedH = Math.min(6000, Math.max(320, parseInt(inputHeight, 10) || 1000));
+    setInputWidth(String(parsedW));
+    setInputHeight(String(parsedH));
+    setCanvasWidth(parsedW);
+    setCanvasHeight(parsedH);
+
+    // Match preset if identical, otherwise mark custom
+    const matched = SIZE_PRESETS.find(
+      (p) => p.width === parsedW && p.height === parsedH
+    );
+    setActivePresetId(matched ? matched.id : 'custom');
+
+    // Auto-select X-banner layout if very tall ratio (e.g., 1:2.4 or taller)
+    if (parsedH / parsedW >= 2.3) {
+      if (mode === 'speaker') {
+        setSpeakerVariant('xbanner-meterboard');
+      } else {
+        setTimetableVariant('agenda-xbanner');
+      }
+    }
+    setLastGeneratedAt(`${parsedW} × ${parsedH} px`);
   };
 
-  // Fetch GCP status on mount
-  useEffect(() => {
-    fetch('/api/gcp/status')
-      .then((r) => r.json())
-      .then((data) => setGcpStatus(data))
-      .catch(() => null);
-  }, []);
+  // Apply a size preset immediately
+  const handleSelectSizePreset = (presetId: string) => {
+    const preset = SIZE_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setActivePresetId(preset.id);
+    setInputWidth(String(preset.width));
+    setInputHeight(String(preset.height));
+    setCanvasWidth(preset.width);
+    setCanvasHeight(preset.height);
+    if (preset.category === 'xbanner') {
+      if (mode === 'speaker') setSpeakerVariant('xbanner-meterboard');
+      if (mode === 'timetable') setTimetableVariant('agenda-xbanner');
+    } else if (preset.category === 'print') {
+      if (mode === 'timetable') setTimetableVariant('agenda-print');
+    }
+    setLastGeneratedAt(`${preset.width} × ${preset.height} px`);
+  };
 
-  // Automatically adjust zoom and print guides when switching preset
-  const handleSelectPreset = (preset: CanvasPreset) => {
-    setSelectedPreset(preset);
-    setActiveCategory(preset.category);
-    setSelectedLayout(preset.defaultLayout);
-    if (preset.category === 'print') {
-      setShowPrintGuides(true);
-      if (preset.height >= 3000) {
-        setZoom(0.2);
-      } else if (preset.width >= 2000) {
-        setZoom(0.32);
-      } else {
-        setZoom(0.36);
+  // Excel upload handler (.xlsx / .csv)
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseUploadedSpeakerExcel(file);
+      if (parsed.length === 0) {
+        setExcelStatusMsg('파일에서 유효한 연사자/세션 행을 찾지 못했습니다.');
+        return;
       }
-    } else {
-      setShowPrintGuides(false);
-      if (preset.height >= 1800) {
-        setZoom(0.36);
-      } else {
-        setZoom(0.48);
-      }
+      setSessions(parsed);
+      setSelectedSpeakerId(parsed[0].id);
+      setExcelStatusMsg(
+        `✓ ${file.name}에서 연사자/세션 ${parsed.length}명을 불러왔습니다.`
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : '엑셀 파일을 읽는 중 오류가 발생했습니다.';
+      setExcelStatusMsg(`오류: ${msg}`);
+    } finally {
+      e.target.value = '';
     }
   };
 
-  // Update currently selected speaker fields
-  const updateActiveSpeaker = (patch: Partial<SpeakerProfile>) => {
-    setSpeakers((prev) =>
-      prev.map((spk) => (spk.id === activeSpeaker.id ? { ...spk, ...patch } : spk))
-    );
-  };
-
-  // Handle Speaker Photo Upload (Merge with Current Template)
+  // Active speaker profile photo upload
   const handleSpeakerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !activeSpeaker) return;
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
@@ -186,556 +151,582 @@ export const DesignStudioWorkspace: React.FC = () => {
           photoOffsetX: 0,
           photoOffsetY: 0,
         });
-        showToast(`✅ '${activeSpeaker.name}' 연사자 사진이 에셋에 머지되었습니다.`);
       }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
   };
 
-  // Add a New Speaker to the Roster
-  const handleAddSpeaker = () => {
-    const newId = `spk-${Date.now()}`;
-    const newSpeaker: SpeakerProfile = {
-      id: newId,
-      name: `신규 연사자 ${speakers.length + 1}`,
-      role: 'Senior Engineer',
-      company: 'GDG Community',
-      topic: '새로운 세션 주제를 입력하고 연사자 사진을 업로드해 머지하세요',
-      track: 'Track A · AI & Cloud',
-      dateTime: '2026. 11. 14 (토) 17:20 - 18:00',
-      venue: '코엑스 그랜드볼룸',
-      bio: '연사자 소개글',
-      tags: ['#GDG', '#DevFest', '#Session'],
-      photoDataUrl: DEFAULT_SPEAKERS[0].photoDataUrl,
+  // Batch speaker photos upload (matches by speaker name in filename or sequential index)
+  const handleBatchPhotoUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+
+    const readAsDataUrl = (f: File) =>
+      new Promise<{ name: string; dataUrl: string }>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve({
+            name: f.name.replace(/\.[^.]+$/, '').normalize('NFC'),
+            dataUrl: typeof reader.result === 'string' ? reader.result : '',
+          });
+        reader.readAsDataURL(f);
+      });
+
+    const loaded = await Promise.all(files.map(readAsDataUrl));
+    let matchedCount = 0;
+
+    setSessions((prev) =>
+      prev.map((spk, idx) => {
+        const normalizedSpkName = spk.name.normalize('NFC').trim();
+        const byName = loaded.find(
+          (item) =>
+            normalizedSpkName &&
+            (item.name.includes(normalizedSpkName) ||
+              normalizedSpkName.includes(item.name))
+        );
+        const chosen = byName || loaded[idx];
+        if (chosen && chosen.dataUrl) {
+          matchedCount++;
+          return {
+            ...spk,
+            photoDataUrl: chosen.dataUrl,
+            photoScale: 1,
+            photoOffsetX: 0,
+            photoOffsetY: 0,
+          };
+        }
+        return spk;
+      })
+    );
+
+    setExcelStatusMsg(
+      `✓ 프로필 사진 ${matchedCount}장을 연사자 목록에 매칭했습니다.`
+    );
+    e.target.value = '';
+  };
+
+  // Custom chapter/sponsor logo upload
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEventMeta((prev) => ({
+          ...prev,
+          customLogoDataUrl: reader.result as string,
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const updateActiveSpeaker = (patch: Partial<SpeakerSessionItem>) => {
+    if (!activeSpeaker) return;
+    setSessions((prev) =>
+      prev.map((item) =>
+        item.id === activeSpeaker.id ? { ...item, ...patch } : item
+      )
+    );
+  };
+
+  const handleAddSpeakerRow = () => {
+    const nextIdx = sessions.length + 1;
+    const newItem: SpeakerSessionItem = {
+      id: `spk-${Date.now()}`,
+      name: `신규 연사 ${nextIdx}`,
+      affiliation: 'GDG Chapter',
+      role: 'Speaker',
+      title: '발표 세션 제목을 입력하세요',
+      description: '세션 핵심 내용을 요약해 주세요.',
+      track: 'AI & Cloud',
+      room: 'Hall A',
+      time: `${12 + nextIdx}:00 - ${12 + nextIdx}:50`,
+      photoDataUrl: SAMPLE_PORTRAITS[(nextIdx - 1) % SAMPLE_PORTRAITS.length],
       photoScale: 1,
       photoOffsetX: 0,
       photoOffsetY: 0,
       photoFilter: 'none',
-      aiAuraEnabled: true,
     };
-    setSpeakers((prev) => [...prev, newSpeaker]);
-    setSelectedSpeakerId(newId);
-    showToast('👤 새 연사자가 추가되었습니다. 사진을 업로드해 머지해보세요!');
+    setSessions((prev) => [...prev, newItem]);
+    setSelectedSpeakerId(newItem.id);
   };
 
-  // Handle Base Asset File Upload
-  const handleBaseAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          const newAsset: BaseAssetItem = {
-            id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            name: file.name.replace(/\.[^.]+$/, ''),
-            type: uploadAssetType,
-            dataUrl: reader.result,
-            opacity: 1,
-            scale: uploadAssetType === 'background' ? 1 : 0.85,
-            x:
-              uploadAssetType === 'background'
-                ? 50
-                : uploadAssetType === 'logo'
-                ? 8
-                : uploadAssetType === 'sponsor'
-                ? 50
-                : 75,
-            y:
-              uploadAssetType === 'background'
-                ? 50
-                : uploadAssetType === 'logo'
-                ? 7
-                : uploadAssetType === 'sponsor'
-                ? 92
-                : 12,
-            visible: true,
-          };
-          setBaseAssets((prev) => [...prev, newAsset]);
-          showToast(`🖼 기본 에셋 '${file.name}' 업로드 완료!`);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = '';
-  };
-
-  // AI Design System Generator (Vertex AI / Gemini or local synthesis)
-  const handleAiDesignSystemGenerate = async () => {
-    if (!aiThemePrompt.trim()) {
-      showToast('생성할 디자인 시스템 분위기나 키워드를 입력해주세요.');
-      return;
-    }
-    setIsAiGenerating(true);
-    try {
-      const res = await fetch('/api/ai/merge-assist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'design-system',
-          prompt: aiThemePrompt,
-        }),
-      });
-      const data = await res.json();
-      if (data?.tokens) {
-        setDesignSystem((prev) => ({
-          ...prev,
-          id: `custom-${Date.now()}`,
-          name: data.tokens.name || prev.name,
-          description: data.tokens.description || prev.description,
-          colors: { ...prev.colors, ...(data.tokens.colors || {}) },
-          shapes: { ...prev.shapes, ...(data.tokens.shapes || {}) },
-        }));
-        showToast(`✨ AI 디자인 시스템 '${data.tokens.name}'이(가) 주입되었습니다!`);
-      }
-    } catch {
-      showToast('디자인 시스템 생성 중 오류가 발생했습니다.');
-    } finally {
-      setIsAiGenerating(false);
+  const handleDeleteSpeakerRow = (id: string) => {
+    if (sessions.length <= 1) return;
+    const remaining = sessions.filter((s) => s.id !== id);
+    setSessions(remaining);
+    if (selectedSpeakerId === id) {
+      setSelectedSpeakerId(remaining[0].id);
     }
   };
 
-  // Open Design System JSON Injector Modal
-  const handleOpenJsonInjector = () => {
-    setJsonInputText(JSON.stringify(designSystem, null, 2));
-    setShowJsonModal(true);
-  };
-
-  // Apply Injected Design System JSON
-  const handleApplyJsonTokens = () => {
-    try {
-      const parsed = JSON.parse(jsonInputText);
-      setDesignSystem((prev) => ({
-        ...prev,
-        ...parsed,
-        colors: { ...prev.colors, ...(parsed.colors || {}) },
-        typography: { ...prev.typography, ...(parsed.typography || {}) },
-        shapes: { ...prev.shapes, ...(parsed.shapes || {}) },
-      }));
-      setShowJsonModal(false);
-      showToast('🎨 커스텀 디자인 시스템 JSON 토큰이 성공적으로 주입되었습니다!');
-    } catch {
-      alert('유효한 JSON 형식이 아닙니다. 문법을 확인해주세요.');
-    }
-  };
-
-  // Export Current Canvas Asset
+  // Export current SVG canvas
   const handleExportCurrent = async () => {
     if (!svgRef.current) return;
     setIsExporting(true);
-    const prevGuides = showPrintGuides;
     try {
-      if (exportOptions.includePrintGuides !== showPrintGuides) {
-        setShowPrintGuides(exportOptions.includePrintGuides);
-        await new Promise((r) => setTimeout(r, 80));
-      }
+      const baseFilename =
+        mode === 'speaker'
+          ? `devfest2026-speaker-${activeSpeaker.name}-${canvasWidth}x${canvasHeight}`
+          : `devfest2026-timetable-${timetableVariant}-${canvasWidth}x${canvasHeight}`;
 
-      const filename = `${eventInfo.eventName}-${selectedPreset.id}-${activeSpeaker.name}`;
       await exportSvgElement(
         svgRef.current,
-        filename,
-        selectedPreset.width,
-        selectedPreset.height,
-        designSystem.colors.background,
-        exportOptions
-      );
-      showToast(
-        `🚀 ${exportOptions.format.toUpperCase()} 포맷 (${
-          selectedPreset.width * exportOptions.scale
-        }×${selectedPreset.height * exportOptions.scale}px) Export 완료!`
-      );
-    } catch (err) {
-      console.error(err);
-      showToast('Export 중 오류가 발생했습니다.');
-    } finally {
-      setShowPrintGuides(prevGuides);
-      setIsExporting(false);
-    }
-  };
-
-  // Batch Export All Speakers sequentially
-  const handleBatchExportAllSpeakers = async () => {
-    if (!svgRef.current) return;
-    setIsExporting(true);
-    const originalSpeakerId = selectedSpeakerId;
-    try {
-      for (const spk of speakers) {
-        setSelectedSpeakerId(spk.id);
-        await new Promise((r) => setTimeout(r, 150));
-        if (svgRef.current) {
-          const filename = `${eventInfo.eventName}-${selectedPreset.id}-${spk.name}`;
-          await exportSvgElement(
-            svgRef.current,
-            filename,
-            selectedPreset.width,
-            selectedPreset.height,
-            designSystem.colors.background,
-            exportOptions
-          );
+        baseFilename,
+        canvasWidth,
+        canvasHeight,
+        activeColorway.canvasBg,
+        {
+          format: exportFormat,
+          scale: exportScale,
+          quality: 0.95,
+          transparentBg: false,
         }
-      }
-      showToast(`🎉 전체 연사자(${speakers.length}명) 에셋 일괄 머지 & Export 완료!`);
+      );
     } finally {
-      setSelectedSpeakerId(originalSpeakerId);
       setIsExporting(false);
     }
   };
 
-  const filteredPresets = CANVAS_PRESETS.filter((p) => p.category === activeCategory);
+  // Compute preview container dimensions so any W x H fits nicely in the viewport
+  const maxPreviewW = 680;
+  const maxPreviewH = 660;
+  const fitScale =
+    Math.min(maxPreviewW / canvasWidth, maxPreviewH / canvasHeight) *
+    (zoomPercent / 100);
+  const displayW = Math.max(180, Math.round(canvasWidth * fitScale));
+  const displayH = Math.max(180, Math.round(canvasHeight * fitScale));
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-      {/* Top Studio Header */}
-      <header className="h-16 border-b border-slate-800 bg-slate-900/90 backdrop-blur px-5 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-4">
-          {/* GDG Studio Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-1 bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-700">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#4285F4]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#EA4335]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#FBBC04]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#34A853]" />
+    <div className="min-h-screen flex flex-col bg-[#f0f0f0] text-[#1e1e1e]">
+      {/* =================================================================== */}
+      {/* TOP BAR: Brand Identity + W × H Numeric Generator + Export Action    */}
+      {/* =================================================================== */}
+      <header className="sticky top-0 z-30 bg-white border-b-2 border-[#1e1e1e] px-4 py-2.5">
+        <div className="max-w-[1800px] mx-auto flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Official { DevFest } 2026 Studio Title */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 font-extrabold text-xl tracking-tight">
+              <span className="text-[#4285f4] text-2xl leading-none">{'{'}</span>
+              <span>DevFest</span>
+              <span className="text-[#4285f4] text-2xl leading-none">{'}'}</span>
             </div>
-            <div>
-              <h1 className="font-extrabold text-base tracking-tight text-white flex items-center gap-2">
-                GDG Design Studio
-                <span className="text-[11px] font-mono uppercase px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                  Event Asset &amp; Speaker Merge
-                </span>
-              </h1>
-            </div>
+            <span className="px-2 py-0.5 text-xs font-mono font-bold bg-[#ffd427] border-[1.5px] border-[#1e1e1e] rounded-full">
+              2026
+            </span>
+            <span className="px-2 py-0.5 text-xs font-mono font-semibold bg-[#5cdb6d] border-[1.5px] border-[#1e1e1e] rounded-md">
+              Asset Studio
+            </span>
           </div>
 
-          <div className="h-6 w-px bg-slate-800 mx-1 hidden md:block" />
-
-          {/* Category Switcher: SNS vs Print (X-Banner / Pamphlet) */}
-          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+          {/* Center: Mode Switch (발표자료 SNS 홍보 카드 vs 시간표 에셋) */}
+          <div className="flex items-center bg-[#f0f0f0] p-1 rounded-lg border-[1.5px] border-[#1e1e1e]">
             <button
-              onClick={() => {
-                const firstSns = CANVAS_PRESETS.find((p) => p.category === 'sns')!;
-                handleSelectPreset(firstSns);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                activeCategory === 'sns'
-                  ? 'bg-blue-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
+              type="button"
+              onClick={() => setMode('speaker')}
+              className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                mode === 'speaker'
+                  ? 'bg-[#1e1e1e] text-white'
+                  : 'text-[#1e1e1e] hover:bg-black/5'
               }`}
             >
-              <Share2 className="w-3.5 h-3.5" />
-              SNS 홍보용
+              연사 발표 홍보 카드 / X배너
             </button>
             <button
-              onClick={() => {
-                const firstPrint = CANVAS_PRESETS.find((p) => p.category === 'print')!;
-                handleSelectPreset(firstPrint);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                activeCategory === 'print'
-                  ? 'bg-amber-500 text-slate-950 shadow'
-                  : 'text-slate-400 hover:text-white'
+              type="button"
+              onClick={() => setMode('timetable')}
+              className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                mode === 'timetable'
+                  ? 'bg-[#1e1e1e] text-white'
+                  : 'text-[#1e1e1e] hover:bg-black/5'
               }`}
             >
-              <Printer className="w-3.5 h-3.5" />
-              인쇄용 (X배너·팜플렛·포스터)
+              시간표 (SNS 카드 / X배너 / 인쇄)
             </button>
           </div>
 
-          {/* Preset Selector Dropdown */}
-          <select
-            value={selectedPreset.id}
-            onChange={(e) => {
-              const found = CANVAS_PRESETS.find((p) => p.id === e.target.value);
-              if (found) handleSelectPreset(found);
-            }}
-            className="bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
-          >
-            {filteredPresets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} — {p.aspectLabel}
-              </option>
-            ))}
-          </select>
-        </div>
+          {/* Right: W x H Numeric Size Input + Generate Button + Export */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <form
+              onSubmit={handleGenerateBySize}
+              className="flex items-center gap-1.5 bg-[#f0f0f0] px-2.5 py-1 rounded-lg border-[1.5px] border-[#1e1e1e]"
+            >
+              <span className="text-[11px] font-mono font-bold text-[#595959] mr-1">
+                SIZE (px)
+              </span>
+              <input
+                type="number"
+                min={320}
+                max={6000}
+                value={inputWidth}
+                onChange={(e) => setInputWidth(e.target.value)}
+                aria-label="출력 가로 사이즈 (Width)"
+                className="w-16 px-1.5 py-1 text-xs font-mono font-bold text-center bg-white border border-[#1e1e1e] rounded"
+              />
+              <span className="text-xs font-mono font-bold">×</span>
+              <input
+                type="number"
+                min={320}
+                max={6000}
+                value={inputHeight}
+                onChange={(e) => setInputHeight(e.target.value)}
+                aria-label="출력 세로 사이즈 (Height)"
+                className="w-16 px-1.5 py-1 text-xs font-mono font-bold text-center bg-white border border-[#1e1e1e] rounded"
+              />
+              <button
+                type="submit"
+                className="ml-1 px-3 py-1 bg-[#ffd427] hover:bg-[#f9ab00] text-[#1e1e1e] font-bold text-xs rounded border-[1.5px] border-[#1e1e1e] shadow-[2px_2px_0px_#1e1e1e] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+              >
+                Generate
+              </button>
+            </form>
 
-        {/* Right Actions: GCP Status & Quick Export */}
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => setShowGcpModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
-          >
-            <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-            <span>GCP Cloud Run Ready</span>
-          </button>
-
-          <button
-            onClick={handleOpenJsonInjector}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
-          >
-            <FileCode className="w-3.5 h-3.5 text-amber-400" />
-            <span>디자인 토큰 JSON 주입</span>
-          </button>
-
-          <button
-            onClick={handleExportCurrent}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/25 transition disabled:opacity-50"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>{isExporting ? '렌더링 중...' : `${exportOptions.format.toUpperCase()} 내보내기`}</span>
-          </button>
+            {/* Format & Export */}
+            <div className="flex items-center gap-1.5">
+              <select
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+                aria-label="내보내기 포맷"
+                className="px-2.5 py-1.5 text-xs font-mono font-bold bg-white border-[1.5px] border-[#1e1e1e] rounded-lg cursor-pointer"
+              >
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+                <option value="svg">SVG (벡터)</option>
+                <option value="webp">WebP</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleExportCurrent}
+                disabled={isExporting}
+                className="px-4 py-1.5 bg-[#4285f4] hover:bg-[#3367d6] text-white font-bold text-xs rounded-lg border-[1.5px] border-[#1e1e1e] shadow-[2px_2px_0px_#1e1e1e] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isExporting ? '생성 중...' : '이미지 다운로드'}
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Main 3-Column Studio Body */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* LEFT SIDEBAR: 4 Tabs (Speaker Merge / Base Assets / Design System / Event Info) */}
-        <aside className="w-[410px] border-r border-slate-800 bg-slate-900 flex flex-col h-[calc(100vh-4rem)]">
-          {/* Tab Navigation */}
-          <div className="grid grid-cols-4 border-b border-slate-800 bg-slate-950/60 p-1.5 gap-1">
-            <button
-              onClick={() => setActiveTab('speaker')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg text-[11px] font-bold transition ${
-                activeTab === 'speaker'
-                  ? 'bg-slate-800 text-blue-400 border border-slate-700'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-4 h-4 mb-1" />
-              연사자 머지
-            </button>
-            <button
-              onClick={() => setActiveTab('assets')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg text-[11px] font-bold transition ${
-                activeTab === 'assets'
-                  ? 'bg-slate-800 text-emerald-400 border border-slate-700'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Layers className="w-4 h-4 mb-1" />
-              기본 에셋
-            </button>
-            <button
-              onClick={() => setActiveTab('design-system')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg text-[11px] font-bold transition ${
-                activeTab === 'design-system'
-                  ? 'bg-slate-800 text-amber-400 border border-slate-700'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Palette className="w-4 h-4 mb-1" />
-              디자인 시스템
-            </button>
-            <button
-              onClick={() => setActiveTab('event')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg text-[11px] font-bold transition ${
-                activeTab === 'event'
-                  ? 'bg-slate-800 text-purple-400 border border-slate-700'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Calendar className="w-4 h-4 mb-1" />
-              행사/팜플렛
-            </button>
-          </div>
+      {/* =================================================================== */}
+      {/* MAIN 3-COLUMN STUDIO BODY                                           */}
+      {/* =================================================================== */}
+      <div className="flex-1 max-w-[1800px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 p-4">
+        {/* ----------------------------------------------------------------- */}
+        {/* LEFT COLUMN (4 cols): Excel Upload, sample.xlsx, Speaker & Photos */}
+        {/* ----------------------------------------------------------------- */}
+        <aside className="lg:col-span-4 flex flex-col gap-4">
+          {/* Card 1: Excel Upload & sample.xlsx Download */}
+          <section className="bg-white border-2 border-[#1e1e1e] rounded-xl p-4 shadow-[3px_3px_0px_#1e1e1e]">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-extrabold text-sm tracking-tight flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#34a853] border border-[#1e1e1e]" />
+                1. 연사자 목록 Excel 업로드
+              </h2>
+              <button
+                type="button"
+                onClick={downloadSampleXlsx}
+                className="px-2.5 py-1 bg-[#c3ecf6] hover:bg-[#57caff] text-[#1e1e1e] font-mono font-bold text-xs rounded-md border-[1.5px] border-[#1e1e1e] transition-colors cursor-pointer"
+              >
+                ↓ sample.xlsx 다운로드
+              </button>
+            </div>
+            <p className="text-xs text-[#595959] mb-3 leading-relaxed">
+              <code className="font-mono bg-[#f0f0f0] px-1 py-0.5 rounded">
+                sample.xlsx
+              </code>{' '}
+              양식(이름, 소속, 직함, 세션 제목, 설명, 트랙, 장소, 시간)을 채워 업로드하면
+              연사 홍보 카드와 시간표가 즉시 생성됩니다.
+            </p>
 
-          {/* Scrollable Tab Content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-5">
-            {/* ============================================================ */}
-            {/* TAB 1: SPEAKER PHOTO UPLOAD & MERGE                          */}
-            {/* ============================================================ */}
-            {activeTab === 'speaker' && (
-              <>
-                {/* Speaker Roster Selector */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-blue-400" />
-                      연사자 선택 ({speakers.length}명)
-                    </span>
-                    <button
-                      onClick={handleAddSpeaker}
-                      className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-md bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 border border-blue-500/30 transition"
-                    >
-                      <UserPlus className="w-3 h-3" />
-                      연사자 추가
-                    </button>
-                  </div>
+            <input
+              ref={excelInputRef}
+              type="file"
+              accept=".xlsx,.csv,.tsv"
+              onChange={handleExcelUpload}
+              className="hidden"
+            />
+            <input
+              ref={batchPhotoInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleBatchPhotoUpload}
+              className="hidden"
+            />
 
-                  <div className="grid grid-cols-1 gap-1.5">
-                    {speakers.map((spk) => (
-                      <div
-                        key={spk.id}
-                        onClick={() => setSelectedSpeakerId(spk.id)}
-                        className={`flex items-center justify-between p-2 rounded-lg border cursor-pointer transition ${
-                          spk.id === activeSpeaker.id
-                            ? 'bg-blue-950/50 border-blue-500/60 text-white'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <img
-                            src={spk.photoDataUrl}
-                            alt={spk.name}
-                            className="w-9 h-9 rounded-full object-cover border border-slate-700 shrink-0"
-                          />
-                          <div className="truncate">
-                            <p className="text-xs font-bold truncate text-slate-100">
-                              {spk.name}
-                            </p>
-                            <p className="text-[11px] text-slate-400 truncate">
-                              {spk.company} · {spk.track}
-                            </p>
-                          </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => excelInputRef.current?.click()}
+                className="py-2.5 px-3 bg-[#f0f0f0] hover:bg-[#ffe7a5] text-[#1e1e1e] font-bold text-xs rounded-lg border-[1.5px] border-dashed border-[#1e1e1e] transition-colors cursor-pointer text-center"
+              >
+                📄 연사 목록 (.xlsx / .csv) 업로드
+              </button>
+              <button
+                type="button"
+                onClick={() => batchPhotoInputRef.current?.click()}
+                className="py-2.5 px-3 bg-[#f0f0f0] hover:bg-[#ccf6c5] text-[#1e1e1e] font-bold text-xs rounded-lg border-[1.5px] border-dashed border-[#1e1e1e] transition-colors cursor-pointer text-center"
+              >
+                🖼️ 프로필 사진 일괄 매칭 업로드
+              </button>
+            </div>
+
+            {excelStatusMsg && (
+              <div className="mt-2.5 px-3 py-1.5 bg-[#ccf6c5] border border-[#1e1e1e] rounded-md text-xs font-mono font-semibold text-[#1e1e1e]">
+                {excelStatusMsg}
+              </div>
+            )}
+          </section>
+
+          {/* Card 2: Speaker / Session Roster & Active Speaker Profile Edit */}
+          <section className="bg-white border-2 border-[#1e1e1e] rounded-xl p-4 shadow-[3px_3px_0px_#1e1e1e] flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-extrabold text-sm tracking-tight flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#4285f4] border border-[#1e1e1e]" />
+                2. 연사자 / 세션 목록 ({sessions.length}명)
+              </h2>
+              <button
+                type="button"
+                onClick={handleAddSpeakerRow}
+                className="px-2.5 py-1 bg-[#f0f0f0] hover:bg-[#ffd427] text-xs font-bold border-[1.5px] border-[#1e1e1e] rounded-md cursor-pointer"
+              >
+                + 연사 추가
+              </button>
+            </div>
+
+            {/* Speaker Selector List */}
+            <div className="max-h-48 overflow-y-auto flex flex-col gap-1.5 pr-1">
+              {sessions.map((spk, idx) => {
+                const isSelected = spk.id === activeSpeaker?.id;
+                return (
+                  <div
+                    key={spk.id}
+                    onClick={() => setSelectedSpeakerId(spk.id)}
+                    className={`flex items-center justify-between p-2 rounded-lg border-[1.5px] cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-[#ffe7a5] border-[#1e1e1e] font-bold'
+                        : 'bg-[#f8f9fa] border-transparent hover:border-[#1e1e1e]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img
+                        src={spk.photoDataUrl}
+                        alt={spk.name}
+                        className="w-9 h-9 rounded-md object-cover border border-[#1e1e1e] bg-white shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold truncate">
+                          {idx + 1}. {spk.name}{' '}
+                          <span className="font-mono font-normal text-[11px] text-[#595959]">
+                            · {spk.affiliation}
+                          </span>
                         </div>
-                        {speakers.length > 1 && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const remaining = speakers.filter((s) => s.id !== spk.id);
-                              setSpeakers(remaining);
-                              if (activeSpeaker.id === spk.id) {
-                                setSelectedSpeakerId(remaining[0].id);
-                              }
-                            }}
-                            className="p-1 text-slate-500 hover:text-rose-400"
-                            title="연사자 삭제"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <div className="text-[11px] text-[#595959] truncate">
+                          [{spk.time}] {spk.title}
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                    {sessions.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          handleDeleteSpeakerRow(spk.id);
+                        }}
+                        title="연사 삭제"
+                        className="ml-2 px-1.5 py-0.5 text-xs text-[#595959] hover:text-[#ea4335] font-mono"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Selected Speaker Detail & Profile Photo Upload */}
+            {activeSpeaker && (
+              <div className="pt-3 border-t-[1.5px] border-[#1e1e1e]/15 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold">
+                    선택된 연사 프로필 & 발표 정보 편집
+                  </span>
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleSpeakerPhotoUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    className="px-2.5 py-1 bg-[#5cdb6d] hover:bg-[#34a853] hover:text-white text-[#1e1e1e] font-bold text-xs rounded-md border-[1.5px] border-[#1e1e1e] transition-colors cursor-pointer"
+                  >
+                    📷 연사자 프로필 사진 업로드
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                      이름
+                    </label>
+                    <input
+                      type="text"
+                      value={activeSpeaker.name}
+                      onChange={(e) =>
+                        updateActiveSpeaker({ name: e.target.value })
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                      소속 (Company/Org)
+                    </label>
+                    <input
+                      type="text"
+                      value={activeSpeaker.affiliation}
+                      onChange={(e) =>
+                        updateActiveSpeaker({ affiliation: e.target.value })
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-semibold"
+                    />
                   </div>
                 </div>
 
-                {/* Speaker Photo Upload & Merge Controls */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                      <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
-                      연사자 사진 업로드 &amp; 프레임 머지
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300">
-                      Auto-Clip Merge
-                    </span>
-                  </div>
-
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-blue-500 bg-slate-900/60 hover:bg-slate-900 rounded-xl p-4 cursor-pointer transition group">
-                    <Upload className="w-6 h-6 text-blue-400 group-hover:scale-110 transition mb-1.5" />
-                    <span className="text-xs font-bold text-slate-200">
-                      연사자 프로필 사진 업로드 (클릭)
-                    </span>
-                    <span className="text-[11px] text-slate-400 mt-0.5">
-                      PNG, JPG, WebP, SVG → 선택한 프레임에 즉시 합성됩니다
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleSpeakerPhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {/* Speaker Frame Shape Selector */}
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
-                      연사자 사진 마스크 프레임 모양
+                    <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                      직함 / 역할
                     </label>
-                    <div className="grid grid-cols-5 gap-1.5">
-                      {(
-                        [
-                          { id: 'arch', label: '아치형' },
-                          { id: 'circle', label: '원형' },
-                          { id: 'hexagon', label: '육각형' },
-                          { id: 'pill', label: '캡슐형' },
-                          { id: 'rounded', label: '라운드' },
-                        ] as { id: SpeakerFrameShape; label: string }[]
-                      ).map((shape) => (
-                        <button
-                          key={shape.id}
-                          onClick={() =>
-                            setDesignSystem((prev) => ({
-                              ...prev,
-                              shapes: { ...prev.shapes, speakerFrameShape: shape.id },
-                            }))
-                          }
-                          className={`py-1.5 rounded-lg text-[11px] font-bold border transition ${
-                            designSystem.shapes.speakerFrameShape === shape.id
-                              ? 'bg-blue-600 text-white border-blue-500'
-                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
-                          }`}
-                        >
-                          {shape.label}
-                        </button>
-                      ))}
-                    </div>
+                    <input
+                      type="text"
+                      value={activeSpeaker.role}
+                      onChange={(e) =>
+                        updateActiveSpeaker({ role: e.target.value })
+                      }
+                      className="w-full px-2 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md"
+                    />
                   </div>
+                  <div>
+                    <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                      트랙
+                    </label>
+                    <input
+                      type="text"
+                      value={activeSpeaker.track}
+                      onChange={(e) =>
+                        updateActiveSpeaker({ track: e.target.value })
+                      }
+                      className="w-full px-2 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                      시간 / 장소
+                    </label>
+                    <input
+                      type="text"
+                      value={activeSpeaker.time}
+                      onChange={(e) =>
+                        updateActiveSpeaker({ time: e.target.value })
+                      }
+                      className="w-full px-2 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-mono"
+                    />
+                  </div>
+                </div>
 
-                  {/* Scale & Position Offset Sliders */}
-                  <div className="grid grid-cols-3 gap-2 pt-1">
-                    <div>
-                      <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                        <span>크기 배율</span>
-                        <span className="font-mono text-slate-200">
-                          {Math.round(activeSpeaker.photoScale * 100)}%
-                        </span>
-                      </div>
+                <div>
+                  <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                    세션 제목
+                  </label>
+                  <input
+                    type="text"
+                    value={activeSpeaker.title}
+                    onChange={(e) =>
+                      updateActiveSpeaker({ title: e.target.value })
+                    }
+                    className="w-full px-2.5 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
+                    세션 설명
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={activeSpeaker.description}
+                    onChange={(e) =>
+                      updateActiveSpeaker({ description: e.target.value })
+                    }
+                    className="w-full px-2.5 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md resize-none"
+                  />
+                </div>
+
+                {/* Photo Framing & Filter Controls */}
+                <div className="bg-[#f0f0f0] p-2.5 rounded-lg border border-[#1e1e1e]/30 grid grid-cols-3 gap-2 items-center">
+                  <div>
+                    <label className="block text-[10px] font-mono font-bold text-[#595959]">
+                      사진 확대 ({Math.round(activeSpeaker.photoScale * 100)}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={0.8}
+                      max={2.0}
+                      step={0.05}
+                      value={activeSpeaker.photoScale}
+                      onChange={(e) =>
+                        updateActiveSpeaker({
+                          photoScale: parseFloat(e.target.value),
+                        })
+                      }
+                      className="w-full accent-[#1e1e1e]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono font-bold text-[#595959]">
+                      좌우/상하 위치
+                    </label>
+                    <div className="flex gap-1">
                       <input
                         type="range"
-                        min="0.6"
-                        max="2.2"
-                        step="0.05"
-                        value={activeSpeaker.photoScale}
-                        onChange={(e) =>
-                          updateActiveSpeaker({ photoScale: parseFloat(e.target.value) })
-                        }
-                        className="w-full accent-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                        <span>가로 위치(X)</span>
-                        <span className="font-mono text-slate-200">
-                          {activeSpeaker.photoOffsetX}
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-40"
-                        max="40"
-                        step="1"
+                        min={-80}
+                        max={80}
                         value={activeSpeaker.photoOffsetX}
                         onChange={(e) =>
-                          updateActiveSpeaker({ photoOffsetX: parseInt(e.target.value, 10) })
+                          updateActiveSpeaker({
+                            photoOffsetX: parseInt(e.target.value, 10),
+                          })
                         }
-                        className="w-full accent-blue-500"
+                        className="w-1/2 accent-[#1e1e1e]"
                       />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                        <span>세로 위치(Y)</span>
-                        <span className="font-mono text-slate-200">
-                          {activeSpeaker.photoOffsetY}
-                        </span>
-                      </div>
                       <input
                         type="range"
-                        min="-40"
-                        max="40"
-                        step="1"
+                        min={-80}
+                        max={80}
                         value={activeSpeaker.photoOffsetY}
                         onChange={(e) =>
-                          updateActiveSpeaker({ photoOffsetY: parseInt(e.target.value, 10) })
+                          updateActiveSpeaker({
+                            photoOffsetY: parseInt(e.target.value, 10),
+                          })
                         }
-                        className="w-full accent-blue-500"
+                        className="w-1/2 accent-[#1e1e1e]"
                       />
                     </div>
                   </div>
-
-                  {/* Photo Filter & AI Studio Aura */}
-                  <div className="flex items-center justify-between gap-2 pt-1">
+                  <div>
+                    <label className="block text-[10px] font-mono font-bold text-[#595959] mb-0.5">
+                      사진 톤
+                    </label>
                     <select
                       value={activeSpeaker.photoFilter}
                       onChange={(e) =>
@@ -743,1090 +734,447 @@ export const DesignStudioWorkspace: React.FC = () => {
                           photoFilter: e.target.value as PhotoFilterType,
                         })
                       }
-                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
+                      className="w-full px-1.5 py-1 text-[11px] font-mono bg-white border border-[#1e1e1e] rounded"
                     >
-                      <option value="none">필터 없음 (원본 컬러)</option>
-                      <option value="contrast">스튜디오 선명한 대비 (Contrast)</option>
-                      <option value="grayscale">흑백 모노톤 (Grayscale)</option>
-                      <option value="duotone-blue">GDG 블루 듀오톤</option>
-                      <option value="duotone-warm">데브페스트 웜톤</option>
+                      <option value="none">원본 컬러</option>
+                      <option value="grayscale">흑백 (B&W)</option>
+                      <option value="contrast">고대비</option>
                     </select>
-
-                    <button
-                      onClick={() =>
-                        updateActiveSpeaker({
-                          aiAuraEnabled: !activeSpeaker.aiAuraEnabled,
-                        })
-                      }
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1 transition ${
-                        activeSpeaker.aiAuraEnabled
-                          ? 'bg-purple-600/30 border-purple-500 text-purple-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      AI 오로라 조명
-                    </button>
                   </div>
-                </div>
-
-                {/* Speaker & Session Text Fields */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                  <span className="text-xs font-bold text-slate-200 block">
-                    연사자 프로필 &amp; 발표 세션 정보
-                  </span>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        연사자 성함
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.name}
-                        onChange={(e) => updateActiveSpeaker({ name: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        소속 (회사/조직)
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.company}
-                        onChange={(e) => updateActiveSpeaker({ company: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        직함 / 역할
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.role}
-                        onChange={(e) => updateActiveSpeaker({ role: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        세션 트랙 배지
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.track}
-                        onChange={(e) => updateActiveSpeaker({ track: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      발표 세션 제목
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={activeSpeaker.topic}
-                      onChange={(e) => updateActiveSpeaker({ topic: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white resize-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        발표 일시
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.dateTime}
-                        onChange={(e) => updateActiveSpeaker({ dateTime: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        발표 홀 / 장소
-                      </label>
-                      <input
-                        type="text"
-                        value={activeSpeaker.venue}
-                        onChange={(e) => updateActiveSpeaker({ venue: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      세션 태그 (공백 또는 쉼표로 구분)
-                    </label>
-                    <input
-                      type="text"
-                      value={activeSpeaker.tags.join(' ')}
-                      onChange={(e) =>
-                        updateActiveSpeaker({
-                          tags: e.target.value.split(/[\s,]+/).filter(Boolean),
-                        })
-                      }
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ============================================================ */}
-            {/* TAB 2: BASE ASSET UPLOAD & LAYER MANAGER                     */}
-            {/* ============================================================ */}
-            {activeTab === 'assets' && (
-              <>
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                    <FolderUp className="w-4 h-4 text-emerald-400" />
-                    기본 에셋 업로드 (로고·배경·프레임·스티커)
-                  </span>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    행사용 베이스 배경 이미지, 투명 PNG 프레임 오버레이, 주최 챕터 로고, 스폰서 로고 바 등을 업로드하여 연사자 사진과 함께 합성합니다.
-                  </p>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                      업로드할 에셋 레이어 역할 선택
-                    </label>
-                    <div className="grid grid-cols-5 gap-1">
-                      {(
-                        [
-                          { id: 'logo', label: '로고' },
-                          { id: 'background', label: '배경' },
-                          { id: 'frame', label: '프레임' },
-                          { id: 'sticker', label: '스티커' },
-                          { id: 'sponsor', label: '스폰서' },
-                        ] as { id: BaseAssetType; label: string }[]
-                      ).map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => setUploadAssetType(item.id)}
-                          className={`py-1.5 rounded-lg text-[11px] font-bold border transition ${
-                            uploadAssetType === item.id
-                              ? 'bg-emerald-600 text-white border-emerald-500'
-                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-emerald-500 bg-slate-900/60 hover:bg-slate-900 rounded-xl p-4 cursor-pointer transition">
-                    <Plus className="w-6 h-6 text-emerald-400 mb-1" />
-                    <span className="text-xs font-bold text-slate-200">
-                      에셋 파일 선택 (다중 업로드 가능)
-                    </span>
-                    <span className="text-[11px] text-slate-400 mt-0.5">
-                      SVG, PNG, JPG, WebP 지원
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*,.svg"
-                      multiple
-                      onChange={handleBaseAssetUpload}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                {/* Active Base Assets Layer List */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                  <span className="text-xs font-bold text-slate-200 block">
-                    에셋 레이어 목록 ({baseAssets.length})
-                  </span>
-
-                  <div className="space-y-2.5">
-                    {baseAssets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <button
-                              onClick={() =>
-                                setBaseAssets((prev) =>
-                                  prev.map((a) =>
-                                    a.id === asset.id ? { ...a, visible: !a.visible } : a
-                                  )
-                                )
-                              }
-                              className={`p-1 rounded ${
-                                asset.visible ? 'text-emerald-400' : 'text-slate-600'
-                              }`}
-                            >
-                              {asset.visible ? (
-                                <Eye className="w-4 h-4" />
-                              ) : (
-                                <EyeOff className="w-4 h-4" />
-                              )}
-                            </button>
-                            <div className="truncate">
-                              <p className="text-xs font-bold text-slate-200 truncate">
-                                {asset.name}
-                              </p>
-                              <span className="text-[10px] font-mono uppercase text-slate-400">
-                                {asset.type}
-                              </span>
-                            </div>
-                          </div>
-
-                          <button
-                            onClick={() =>
-                              setBaseAssets((prev) => prev.filter((a) => a.id !== asset.id))
-                            }
-                            className="p-1 text-slate-500 hover:text-rose-400"
-                            title="레이어 삭제"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {asset.visible && asset.type !== 'frame' && (
-                          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800/80">
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">
-                                크기 ({Math.round(asset.scale * 100)}%)
-                              </span>
-                              <input
-                                type="range"
-                                min="0.2"
-                                max="2.5"
-                                step="0.05"
-                                value={asset.scale}
-                                onChange={(e) =>
-                                  setBaseAssets((prev) =>
-                                    prev.map((a) =>
-                                      a.id === asset.id
-                                        ? { ...a, scale: parseFloat(e.target.value) }
-                                        : a
-                                    )
-                                  )
-                                }
-                                className="w-full accent-emerald-500"
-                              />
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">
-                                X 위치 ({asset.x}%)
-                              </span>
-                              <input
-                                type="range"
-                                min="0"
-                                max="95"
-                                step="1"
-                                value={asset.x}
-                                onChange={(e) =>
-                                  setBaseAssets((prev) =>
-                                    prev.map((a) =>
-                                      a.id === asset.id
-                                        ? { ...a, x: parseInt(e.target.value, 10) }
-                                        : a
-                                    )
-                                  )
-                                }
-                                className="w-full accent-emerald-500"
-                              />
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block">
-                                Y 위치 ({asset.y}%)
-                              </span>
-                              <input
-                                type="range"
-                                min="0"
-                                max="95"
-                                step="1"
-                                value={asset.y}
-                                onChange={(e) =>
-                                  setBaseAssets((prev) =>
-                                    prev.map((a) =>
-                                      a.id === asset.id
-                                        ? { ...a, y: parseInt(e.target.value, 10) }
-                                        : a
-                                    )
-                                  )
-                                }
-                                className="w-full accent-emerald-500"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ============================================================ */}
-            {/* TAB 3: DESIGN SYSTEM INJECTOR                                */}
-            {/* ============================================================ */}
-            {activeTab === 'design-system' && (
-              <>
-                {/* Built-in Design System Presets */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                      <Palette className="w-4 h-4 text-amber-400" />
-                      디자인 시스템 테마 주입
-                    </span>
-                    <button
-                      onClick={handleOpenJsonInjector}
-                      className="text-[11px] font-bold text-amber-400 hover:underline"
-                    >
-                      JSON 직접 편집 →
-                    </button>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    {DESIGN_SYSTEM_PRESETS.map((preset) => (
-                      <button
-                        key={preset.id}
-                        onClick={() => {
-                          setDesignSystem(preset);
-                          showToast(`🎨 '${preset.name}' 디자인 시스템이 적용되었습니다.`);
-                        }}
-                        className={`w-full text-left p-2.5 rounded-lg border transition flex items-center justify-between ${
-                          designSystem.id === preset.id
-                            ? 'bg-slate-800 border-amber-500/70 text-white'
-                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <p className="text-xs font-bold truncate">{preset.name}</p>
-                          <p className="text-[10px] text-slate-400 truncate">
-                            {preset.description}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span
-                            className="w-3.5 h-3.5 rounded-full border border-white/20"
-                            style={{ backgroundColor: preset.colors.primary }}
-                          />
-                          <span
-                            className="w-3.5 h-3.5 rounded-full border border-white/20"
-                            style={{ backgroundColor: preset.colors.secondary }}
-                          />
-                          <span
-                            className="w-3.5 h-3.5 rounded-full border border-white/20"
-                            style={{ backgroundColor: preset.colors.accent }}
-                          />
-                          <span
-                            className="w-3.5 h-3.5 rounded-full border border-white/20"
-                            style={{ backgroundColor: preset.colors.background }}
-                          />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* AI Prompt Design System Generator */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
-                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                    <Wand2 className="w-3.5 h-3.5 text-purple-400" />
-                    AI 프롬프트로 디자인 시스템 생성 (Gemini / Vertex AI)
-                  </span>
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      placeholder="예: 다크 네온 AI 해커톤 / 따뜻한 봄 파스텔"
-                      value={aiThemePrompt}
-                      onChange={(e) => setAiThemePrompt(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleAiDesignSystemGenerate();
-                      }}
-                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                    />
-                    <button
-                      onClick={handleAiDesignSystemGenerate}
-                      disabled={isAiGenerating}
-                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shrink-0 disabled:opacity-50"
-                    >
-                      {isAiGenerating ? '생성중' : '주입'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Color & Shape Token Fine-Tuning */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-blue-400" />
-                    세부 컬러 &amp; 형태 토큰 커스텀
-                  </span>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        { key: 'primary', label: 'Primary' },
-                        { key: 'secondary', label: 'Secondary' },
-                        { key: 'accent', label: 'Accent' },
-                        { key: 'background', label: '배경(BG)' },
-                        { key: 'surface', label: '카드(Surface)' },
-                        { key: 'textPrimary', label: '본문 텍스트' },
-                      ] as { key: keyof DesignSystemTokens['colors']; label: string }[]
-                    ).map((c) => (
-                      <label
-                        key={c.key}
-                        className="flex items-center gap-2 bg-slate-900 border border-slate-800 p-1.5 rounded-lg cursor-pointer"
-                      >
-                        <input
-                          type="color"
-                          value={designSystem.colors[c.key]}
-                          onChange={(e) =>
-                            setDesignSystem((prev) => ({
-                              ...prev,
-                              colors: { ...prev.colors, [c.key]: e.target.value },
-                            }))
-                          }
-                          className="w-5 h-5 rounded border-0 bg-transparent cursor-pointer"
-                        />
-                        <span className="text-[11px] text-slate-300 truncate">{c.label}</span>
-                      </label>
-                    ))}
-                  </div>
-
-                  {/* Pattern & Shadow Style */}
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        배경 그래픽 패턴
-                      </label>
-                      <select
-                        value={designSystem.shapes.patternStyle}
-                        onChange={(e) =>
-                          setDesignSystem((prev) => ({
-                            ...prev,
-                            shapes: {
-                              ...prev.shapes,
-                              patternStyle: e.target.value as PatternStyleType,
-                            },
-                          }))
-                        }
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
-                      >
-                        <option value="dots">도트 패턴 (Dots)</option>
-                        <option value="grid">테크 그리드 (Grid)</option>
-                        <option value="aurora">AI 오로라 (Aurora)</option>
-                        <option value="geometric">기하학 도형 (Geometric)</option>
-                        <option value="none">패턴 없음 (Clean)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">
-                        카드 그림자/테두리 무드
-                      </label>
-                      <select
-                        value={designSystem.shapes.shadowStyle}
-                        onChange={(e) =>
-                          setDesignSystem((prev) => ({
-                            ...prev,
-                            shapes: {
-                              ...prev.shapes,
-                              shadowStyle: e.target.value as ShadowStyleType,
-                            },
-                          }))
-                        }
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white"
-                      >
-                        <option value="brutalist">네오브루탈리즘 (GDG 오프셋)</option>
-                        <option value="glow">네온 글로우 (Glow)</option>
-                        <option value="soft">소프트 모던 (Soft)</option>
-                        <option value="none">플랫 (Flat)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-[11px] text-slate-400 block mb-1">
-                        모서리 곡률 ({designSystem.shapes.borderRadius}px)
-                      </span>
-                      <input
-                        type="range"
-                        min="0"
-                        max="56"
-                        value={designSystem.shapes.borderRadius}
-                        onChange={(e) =>
-                          setDesignSystem((prev) => ({
-                            ...prev,
-                            shapes: {
-                              ...prev.shapes,
-                              borderRadius: parseInt(e.target.value, 10),
-                            },
-                          }))
-                        }
-                        className="w-full accent-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[11px] text-slate-400 block mb-1">
-                        테두리 두께 ({designSystem.shapes.borderWidth}px)
-                      </span>
-                      <input
-                        type="range"
-                        min="0"
-                        max="8"
-                        value={designSystem.shapes.borderWidth}
-                        onChange={(e) =>
-                          setDesignSystem((prev) => ({
-                            ...prev,
-                            shapes: {
-                              ...prev.shapes,
-                              borderWidth: parseInt(e.target.value, 10),
-                            },
-                          }))
-                        }
-                        className="w-full accent-amber-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ============================================================ */}
-            {/* TAB 4: EVENT INFO & PAMPHLET SCHEDULE                        */}
-            {/* ============================================================ */}
-            {activeTab === 'event' && (
-              <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                <span className="text-xs font-bold text-slate-200 block">
-                  행사 공통 정보 &amp; 인쇄물(X배너·팜플렛) 텍스트
-                </span>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">행사 타이틀</label>
-                  <input
-                    type="text"
-                    value={eventInfo.eventName}
-                    onChange={(e) =>
-                      setEventInfo((prev) => ({ ...prev, eventName: e.target.value }))
-                    }
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">행사 슬로건 / 부제</label>
-                  <input
-                    type="text"
-                    value={eventInfo.subtitle}
-                    onChange={(e) =>
-                      setEventInfo((prev) => ({ ...prev, subtitle: e.target.value }))
-                    }
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">주최 챕터명</label>
-                    <input
-                      type="text"
-                      value={eventInfo.chapterName}
-                      onChange={(e) =>
-                        setEventInfo((prev) => ({ ...prev, chapterName: e.target.value }))
-                      }
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">대표 해시태그</label>
-                    <input
-                      type="text"
-                      value={eventInfo.hashtag}
-                      onChange={(e) =>
-                        setEventInfo((prev) => ({ ...prev, hashtag: e.target.value }))
-                      }
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">행사 일시</label>
-                  <input
-                    type="text"
-                    value={eventInfo.date}
-                    onChange={(e) => setEventInfo((prev) => ({ ...prev, date: e.target.value }))}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">행사 장소</label>
-                  <input
-                    type="text"
-                    value={eventInfo.location}
-                    onChange={(e) =>
-                      setEventInfo((prev) => ({ ...prev, location: e.target.value }))
-                    }
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    하단 CTA 안내 문구 (X배너 하단 등)
-                  </label>
-                  <input
-                    type="text"
-                    value={eventInfo.ctaText}
-                    onChange={(e) =>
-                      setEventInfo((prev) => ({ ...prev, ctaText: e.target.value }))
-                    }
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    팜플렛(리플렛) 행사 소개글
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={eventInfo.pamphletIntro}
-                    onChange={(e) =>
-                      setEventInfo((prev) => ({ ...prev, pamphletIntro: e.target.value }))
-                    }
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white resize-none"
-                  />
                 </div>
               </div>
             )}
-          </div>
+          </section>
         </aside>
 
-        {/* CENTER WORKSPACE: Interactive Canvas Stage & Layout Bar */}
-        <main className="flex-1 flex flex-col bg-slate-950 relative overflow-hidden">
-          {/* Sub-Toolbar: Layout Template Switcher & Print Guides */}
-          <div className="border-b border-slate-800/80 bg-slate-900/50 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1 mr-1">
-                <LayoutTemplate className="w-3.5 h-3.5 text-blue-400" />
-                레이아웃:
+        {/* ----------------------------------------------------------------- */}
+        {/* CENTER COLUMN (5 cols): Live DevFest 2026 SVG Canvas Preview      */}
+        {/* ----------------------------------------------------------------- */}
+        <main className="lg:col-span-5 flex flex-col bg-[#e4e6ea] border-2 border-[#1e1e1e] rounded-xl shadow-[3px_3px_0px_#1e1e1e] overflow-hidden">
+          {/* Canvas Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-white border-b-2 border-[#1e1e1e]">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-[#1e1e1e] text-white font-mono font-bold text-xs rounded">
+                {canvasWidth} × {canvasHeight} px
               </span>
-              {LAYOUT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => setSelectedLayout(opt.id)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition flex items-center gap-1.5 whitespace-nowrap ${
-                    selectedLayout === opt.id
-                      ? 'bg-blue-600/25 border-blue-500 text-blue-200'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <span>{opt.label}</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
-                    {opt.badge}
-                  </span>
-                </button>
-              ))}
+              <span className="text-xs font-mono text-[#595959]">
+                비율 {(canvasWidth / canvasHeight).toFixed(2)}:1
+              </span>
             </div>
 
-            {/* Right Controls: Print Guides & Zoom */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
-                onClick={() => setShowPrintGuides((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
-                  showPrintGuides
-                    ? 'bg-rose-500/20 border-rose-500/60 text-rose-300'
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                }`}
+                type="button"
+                onClick={() => setZoomPercent((z) => Math.max(50, z - 15))}
+                className="px-2 py-0.5 text-xs font-mono font-bold bg-[#f0f0f0] border border-[#1e1e1e] rounded cursor-pointer"
               >
-                📏 인쇄 가이드(재단·접지·타공선) {showPrintGuides ? 'ON' : 'OFF'}
+                -
               </button>
-
-              <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg px-1.5 py-0.5">
-                <button
-                  onClick={() => setZoom((z) => Math.max(0.15, +(z - 0.08).toFixed(2)))}
-                  className="p-1 text-slate-400 hover:text-white"
-                  title="축소"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[11px] font-mono px-2 text-slate-300">
-                  {Math.round(zoom * 100)}%
-                </span>
-                <button
-                  onClick={() => setZoom((z) => Math.min(1.2, +(z + 0.08).toFixed(2)))}
-                  className="p-1 text-slate-400 hover:text-white"
-                  title="확대"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              <span className="text-xs font-mono font-bold w-12 text-center">
+                {zoomPercent}%
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoomPercent((z) => Math.min(160, z + 15))}
+                className="px-2 py-0.5 text-xs font-mono font-bold bg-[#f0f0f0] border border-[#1e1e1e] rounded cursor-pointer"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomPercent(100)}
+                className="px-2 py-0.5 text-[11px] font-mono bg-white border border-[#1e1e1e] rounded cursor-pointer"
+              >
+                Fit
+              </button>
             </div>
           </div>
 
-          {/* Canvas Viewport Area */}
-          <div className="flex-1 overflow-auto flex items-center justify-center p-8 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px]">
+          {/* Canvas Viewport */}
+          <div className="flex-1 min-h-[540px] flex items-center justify-center p-6 overflow-auto">
             <div
-              className="shadow-2xl shadow-black/80 ring-1 ring-white/10 transition-all duration-150 origin-center bg-transparent"
               style={{
-                width: Math.round(selectedPreset.width * zoom),
-                height: Math.round(selectedPreset.height * zoom),
+                width: `${displayW}px`,
+                height: `${displayH}px`,
               }}
+              className="relative bg-white shadow-[6px_6px_0px_rgba(30,30,30,0.22)] border border-[#1e1e1e] transition-all duration-150 shrink-0"
             >
               <CanvasSvgRenderer
                 svgRef={svgRef}
-                preset={selectedPreset}
-                layout={selectedLayout}
-                designSystem={designSystem}
-                speaker={activeSpeaker}
-                allSpeakers={speakers}
-                eventInfo={eventInfo}
-                baseAssets={baseAssets}
-                showPrintGuides={showPrintGuides}
-                transparentBg={exportOptions.transparentBg}
+                width={canvasWidth}
+                height={canvasHeight}
+                mode={mode}
+                speakerVariant={speakerVariant}
+                timetableVariant={timetableVariant}
+                colorway={activeColorway}
+                activeSpeaker={activeSpeaker}
+                sessions={sessions}
+                eventMeta={eventMeta}
               />
             </div>
           </div>
 
-          {/* Bottom Spec Info Bar */}
-          <div className="h-9 border-t border-slate-800/80 bg-slate-900/80 px-4 flex items-center justify-between text-[11px] text-slate-400">
-            <div className="flex items-center gap-4">
-              <span>
-                규격: <strong className="text-slate-200">{selectedPreset.name}</strong> (
-                {selectedPreset.width} × {selectedPreset.height} px
-                {selectedPreset.physicalSize ? ` · 인쇄 ${selectedPreset.physicalSize}` : ''})
-              </span>
-              <span>
-                디자인 시스템: <strong className="text-amber-300">{designSystem.name}</strong>
-              </span>
-              <span>
-                현재 머지 연사자: <strong className="text-blue-300">{activeSpeaker.name}</strong>
-              </span>
-            </div>
-
-            {statusToast && (
-              <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 animate-pulse">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                {statusToast}
+          {/* Bottom Quick Speaker Switcher Bar */}
+          <div className="px-4 py-2 bg-white border-t-2 border-[#1e1e1e] flex items-center justify-between text-xs">
+            <span className="font-mono text-[#595959]">
+              마지막 생성 규격: <strong className="text-[#1e1e1e]">{lastGeneratedAt}</strong>
+            </span>
+            {mode === 'speaker' && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[#595959] font-mono">연사 전환:</span>
+                {sessions.map((s, idx) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setSelectedSpeakerId(s.id)}
+                    className={`px-2 py-0.5 rounded font-mono text-xs border ${
+                      s.id === activeSpeaker.id
+                        ? 'bg-[#1e1e1e] text-white border-[#1e1e1e]'
+                        : 'bg-[#f0f0f0] text-[#1e1e1e] border-[#1e1e1e]/40'
+                    } cursor-pointer`}
+                  >
+                    {idx + 1}.{s.name}
+                  </button>
+                ))}
               </div>
             )}
           </div>
         </main>
 
-        {/* RIGHT PANEL: Multi-Format Export & Batch Speaker Merge */}
-        <aside className="w-80 border-l border-slate-800 bg-slate-900 p-4 flex flex-col justify-between h-[calc(100vh-4rem)] overflow-y-auto">
-          <div className="space-y-5">
-            <div>
-              <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 mb-1">
-                <Download className="w-4 h-4 text-blue-400" />
-                포맷별 에셋 Export 설정
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                SVG 벡터 원본부터 인쇄용 300 DPI 고해상도 PNG/JPG까지 원하는 포맷으로 즉시 출력합니다.
-              </p>
-            </div>
+        {/* ----------------------------------------------------------------- */}
+        {/* RIGHT COLUMN (3 cols): Size Presets, DevFest 2026 Templates & Colors */}
+        {/* ----------------------------------------------------------------- */}
+        <aside className="lg:col-span-3 flex flex-col gap-4">
+          {/* Card 3: Output Size Generator & Presets */}
+          <section className="bg-white border-2 border-[#1e1e1e] rounded-xl p-4 shadow-[3px_3px_0px_#1e1e1e]">
+            <h2 className="font-extrabold text-sm tracking-tight flex items-center gap-2 mb-2.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#f9ab00] border border-[#1e1e1e]" />
+              3. 출력 사이즈 지정 & 프리셋
+            </h2>
 
-            {/* Format Selection: SVG / PNG / JPG / WebP */}
-            <div className="space-y-2">
-              <label className="block text-[11px] font-bold text-slate-300">
-                파일 포맷 선택
-              </label>
-              <div className="grid grid-cols-2 gap-2">
+            {/* Direct W x H input form */}
+            <form onSubmit={handleGenerateBySize} className="mb-3">
+              <div className="grid grid-cols-12 gap-1.5 items-end">
+                <div className="col-span-4">
+                  <label className="block text-[10px] font-mono font-bold text-[#595959] mb-1">
+                    가로 W (px)
+                  </label>
+                  <input
+                    type="number"
+                    min={320}
+                    max={6000}
+                    value={inputWidth}
+                    onChange={(e) => setInputWidth(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs font-mono font-bold bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md"
+                  />
+                </div>
+                <div className="col-span-4">
+                  <label className="block text-[10px] font-mono font-bold text-[#595959] mb-1">
+                    세로 H (px)
+                  </label>
+                  <input
+                    type="number"
+                    min={320}
+                    max={6000}
+                    value={inputHeight}
+                    onChange={(e) => setInputHeight(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs font-mono font-bold bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md"
+                  />
+                </div>
+                <div className="col-span-4">
+                  <button
+                    type="submit"
+                    className="w-full py-1.5 bg-[#ffd427] hover:bg-[#f9ab00] text-[#1e1e1e] font-extrabold text-xs rounded-md border-[1.5px] border-[#1e1e1e] shadow-[2px_2px_0px_#1e1e1e] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none cursor-pointer"
+                  >
+                    Generate
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            {/* Quick Size Presets */}
+            <div className="flex flex-col gap-1.5">
+              {SIZE_PRESETS.map((preset) => {
+                const active = activePresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleSelectSizePreset(preset.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border-[1.5px] transition-colors flex items-center justify-between cursor-pointer ${
+                      active
+                        ? 'bg-[#c3ecf6] border-[#1e1e1e] font-bold'
+                        : 'bg-[#f8f9fa] border-transparent hover:border-[#1e1e1e]'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-xs font-bold">{preset.name}</div>
+                      <div className="text-[11px] text-[#595959]">
+                        {preset.usageLabel}
+                      </div>
+                    </div>
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white border border-[#1e1e1e] rounded">
+                      {preset.aspectLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Card 4: Official DevFest 2026 Template & Colorway */}
+          <section className="bg-white border-2 border-[#1e1e1e] rounded-xl p-4 shadow-[3px_3px_0px_#1e1e1e] flex flex-col gap-3">
+            <h2 className="font-extrabold text-sm tracking-tight flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#ea4335] border border-[#1e1e1e]" />
+              4. DevFest 2026 템플릿 & 컬러
+            </h2>
+
+            {/* Template Variant Picker */}
+            {mode === 'speaker' ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-mono font-bold text-[#595959]">
+                  연사 홍보 레이아웃 스타일
+                </label>
                 {(
                   [
                     {
-                      id: 'svg',
-                      label: 'SVG (벡터 원본)',
-                      desc: '피그마·일러스트레이터·인쇄소용',
+                      id: 'devfest-bracket',
+                      label: '{ DevFest } 2026 스텝 프레임형',
+                      desc: '공식 가이드 기본 중괄호 헤더 + 스텝 포토 + GDG 노치',
                     },
                     {
-                      id: 'png',
-                      label: 'PNG (무손실)',
-                      desc: 'SNS 홍보·투명 배경 지원',
+                      id: 'track-notch',
+                      label: 'Track @DevFest + 슬래시(//)형',
+                      desc: '트랙명 강조 헤더 + 더블 슬래시 그래픽 + 스텝 포토',
                     },
                     {
-                      id: 'jpg',
-                      label: 'JPG (고화질 압축)',
-                      desc: '행사 페이지·경량 업로드',
+                      id: 'xbanner-meterboard',
+                      label: 'X배너 / 스탠딩 배너 (Meterboard)',
+                      desc: '우상단 노치 에스터리스크(*) + 대형 사진 + 하단 세션 카드',
                     },
-                    {
-                      id: 'webp',
-                      label: 'WebP (웹 최적화)',
-                      desc: '차세대 초경량 웹 에셋',
-                    },
-                  ] as { id: ExportFormat; label: string; desc: string }[]
-                ).map((fmt) => (
+                  ] as const
+                ).map((v) => (
                   <button
-                    key={fmt.id}
-                    onClick={() =>
-                      setExportOptions((prev) => ({ ...prev, format: fmt.id }))
-                    }
-                    className={`p-2.5 rounded-xl border text-left transition ${
-                      exportOptions.format === fmt.id
-                        ? 'bg-blue-600/20 border-blue-500 text-white'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                    key={v.id}
+                    type="button"
+                    onClick={() => setSpeakerVariant(v.id)}
+                    className={`text-left px-3 py-2 rounded-lg border-[1.5px] cursor-pointer ${
+                      speakerVariant === v.id
+                        ? 'bg-[#ffe7a5] border-[#1e1e1e]'
+                        : 'bg-[#f8f9fa] border-transparent hover:border-[#1e1e1e]'
                     }`}
                   >
-                    <p className="text-xs font-extrabold">{fmt.label}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">{fmt.desc}</p>
+                    <div className="text-xs font-bold">{v.label}</div>
+                    <div className="text-[11px] text-[#595959]">{v.desc}</div>
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Resolution Scale Multiplier */}
-            <div className="space-y-2">
-              <label className="block text-[11px] font-bold text-slate-300">
-                출력 해상도 배율 (DPI 스케일)
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {([1, 2, 3] as (1 | 2 | 3)[]).map((sc) => (
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-mono font-bold text-[#595959]">
+                  시간표 (Agenda) 레이아웃 스타일
+                </label>
+                {(
+                  [
+                    {
+                      id: 'agenda-digital',
+                      label: 'SNS 디지털 시간표 (스텝 카드형)',
+                      desc: '좌상단 Agenda 탭 + 우상단 Track @DevFest + 좌하단 GDG 로고',
+                    },
+                    {
+                      id: 'agenda-xbanner',
+                      label: 'X배너 세로 스탠딩 시간표',
+                      desc: '현장 거치형 세로 타임테이블 + 연사 썸네일 & 세션 요약',
+                    },
+                    {
+                      id: 'agenda-print',
+                      label: 'A4 / 와이드 멀티트랙 인쇄용 시간표',
+                      desc: '스캘럽 아치 스티커 + 2단/다단 그리드 인쇄 최적화',
+                    },
+                  ] as const
+                ).map((v) => (
                   <button
-                    key={sc}
-                    onClick={() => setExportOptions((prev) => ({ ...prev, scale: sc }))}
-                    className={`py-2 px-2 rounded-lg border text-center transition ${
-                      exportOptions.scale === sc
-                        ? 'bg-emerald-600/25 border-emerald-500 text-emerald-200 font-bold'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-400'
+                    key={v.id}
+                    type="button"
+                    onClick={() => setTimetableVariant(v.id)}
+                    className={`text-left px-3 py-2 rounded-lg border-[1.5px] cursor-pointer ${
+                      timetableVariant === v.id
+                        ? 'bg-[#ffe7a5] border-[#1e1e1e]'
+                        : 'bg-[#f8f9fa] border-transparent hover:border-[#1e1e1e]'
                     }`}
                   >
-                    <div className="text-xs font-extrabold">{sc}x</div>
-                    <div className="text-[10px] opacity-80">
-                      {sc === 1 ? '웹 표준' : sc === 2 ? '고화질' : '인쇄급 300DPI'}
-                    </div>
+                    <div className="text-xs font-bold">{v.label}</div>
+                    <div className="text-[11px] text-[#595959]">{v.desc}</div>
                   </button>
                 ))}
-              </div>
-              <p className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                출력 픽셀:{' '}
-                <strong className="text-white">
-                  {selectedPreset.width * exportOptions.scale} ×{' '}
-                  {selectedPreset.height * exportOptions.scale} px
-                </strong>
-              </p>
-            </div>
-
-            {/* Quality Slider for JPG / WebP */}
-            {(exportOptions.format === 'jpg' || exportOptions.format === 'webp') && (
-              <div>
-                <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                  <span>압축 품질 (Quality)</span>
-                  <span className="font-mono">{Math.round(exportOptions.quality * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.7"
-                  max="1"
-                  step="0.05"
-                  value={exportOptions.quality}
-                  onChange={(e) =>
-                    setExportOptions((prev) => ({
-                      ...prev,
-                      quality: parseFloat(e.target.value),
-                    }))
-                  }
-                  className="w-full accent-blue-500"
-                />
               </div>
             )}
 
-            {/* Checkboxes: Transparent Background & Print Guides */}
-            <div className="space-y-2 pt-1 border-t border-slate-800">
-              {exportOptions.format !== 'jpg' && (
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={exportOptions.transparentBg}
-                    onChange={(e) =>
-                      setExportOptions((prev) => ({
-                        ...prev,
-                        transparentBg: e.target.checked,
-                      }))
-                    }
-                    className="rounded accent-blue-500"
-                  />
-                  <span>배경 투명화 (Transparent Background)</span>
-                </label>
-              )}
+            {/* Official Colorway Picker */}
+            <div>
+              <label className="block text-[11px] font-mono font-bold text-[#595959] mb-1.5">
+                공식 가이드 컬러 팔레트
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {DEVFEST_COLORWAYS.map((cw) => {
+                  const selected = cw.id === colorwayId;
+                  return (
+                    <button
+                      key={cw.id}
+                      type="button"
+                      onClick={() => setColorwayId(cw.id)}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border-[1.5px] text-left cursor-pointer ${
+                        selected
+                          ? 'bg-[#1e1e1e] text-white border-[#1e1e1e]'
+                          : 'bg-[#f8f9fa] text-[#1e1e1e] border-[#1e1e1e]/30 hover:border-[#1e1e1e]'
+                      }`}
+                    >
+                      <span
+                        className="w-4 h-4 rounded-full border border-[#1e1e1e] shrink-0"
+                        style={{ backgroundColor: cw.canvasBg }}
+                      />
+                      <span className="text-[11px] font-bold truncate">
+                        {cw.name.replace(/\s*\([^)]*\)/, '')}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            {/* Event Header Metadata Controls */}
+            <div className="pt-2 border-t border-[#1e1e1e]/15 flex flex-col gap-2">
+              <label className="text-[11px] font-mono font-bold text-[#595959]">
+                행사 헤더 텍스트 & 그래픽 요소
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="block text-[10px] font-mono text-[#595959]">
+                    지역 알약 (Location Pill)
+                  </span>
+                  <input
+                    type="text"
+                    value={eventMeta.locationText}
+                    onChange={(e) =>
+                      setEventMeta((m) => ({ ...m, locationText: e.target.value }))
+                    }
+                    className="w-full px-2 py-1 text-xs font-mono bg-[#f8f9fa] border border-[#1e1e1e] rounded"
+                  />
+                </div>
+                <div>
+                  <span className="block text-[10px] font-mono text-[#595959]">
+                    연도 알약 (Year Pill)
+                  </span>
+                  <input
+                    type="text"
+                    value={eventMeta.yearText}
+                    onChange={(e) =>
+                      setEventMeta((m) => ({ ...m, yearText: e.target.value }))
+                    }
+                    className="w-full px-2 py-1 text-xs font-mono bg-[#f8f9fa] border border-[#1e1e1e] rounded"
+                  />
+                </div>
+              </div>
+              <div>
+                <span className="block text-[10px] font-mono text-[#595959]">
+                  일시 · 장소 안내 문구
+                </span>
                 <input
-                  type="checkbox"
-                  checked={exportOptions.includePrintGuides}
+                  type="text"
+                  value={eventMeta.dateVenueSubtext}
                   onChange={(e) =>
-                    setExportOptions((prev) => ({
-                      ...prev,
-                      includePrintGuides: e.target.checked,
+                    setEventMeta((m) => ({
+                      ...m,
+                      dateVenueSubtext: e.target.value,
                     }))
                   }
-                  className="rounded accent-rose-500"
+                  className="w-full px-2 py-1 text-xs font-mono bg-[#f8f9fa] border border-[#1e1e1e] rounded"
                 />
-                <span>인쇄소용 재단선/접지선 포함하여 Export</span>
-              </label>
-            </div>
+              </div>
 
-            {/* Primary Export Buttons */}
-            <div className="space-y-2.5 pt-2">
-              <button
-                onClick={handleExportCurrent}
-                disabled={isExporting}
-                className="w-full py-3 px-4 rounded-xl font-extrabold text-xs bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 transition disabled:opacity-50"
-              >
-                <Download className="w-4 h-4" />
-                <span>
-                  현재 에셋 {exportOptions.format.toUpperCase()} 다운로드
-                </span>
-              </button>
+              <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={eventMeta.showWireframeGlobe}
+                    onChange={(e) =>
+                      setEventMeta((m) => ({
+                        ...m,
+                        showWireframeGlobe: e.target.checked,
+                      }))
+                    }
+                    className="accent-[#1e1e1e]"
+                  />
+                  <span>와이어프레임 지구본</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={eventMeta.showAsteriskSticker}
+                    onChange={(e) =>
+                      setEventMeta((m) => ({
+                        ...m,
+                        showAsteriskSticker: e.target.checked,
+                      }))
+                    }
+                    className="accent-[#1e1e1e]"
+                  />
+                  <span>애스터리스크(*)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={eventMeta.showCropMarks}
+                    onChange={(e) =>
+                      setEventMeta((m) => ({
+                        ...m,
+                        showCropMarks: e.target.checked,
+                      }))
+                    }
+                    className="accent-[#1e1e1e]"
+                  />
+                  <span>인쇄 재단선/타공선</span>
+                </label>
+              </div>
 
-              <button
-                onClick={handleBatchExportAllSpeakers}
-                disabled={isExporting}
-                className="w-full py-2.5 px-4 rounded-xl font-bold text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center gap-2 transition disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isExporting ? 'animate-spin' : ''}`} />
-                <span>
-                  전체 연사자 ({speakers.length}명) 일괄 머지 Export
-                </span>
-              </button>
+              {/* Optional Custom Logo Upload + Export Scale */}
+              <div className="flex items-center justify-between pt-2 border-t border-[#1e1e1e]/15">
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  className="px-2.5 py-1 text-[11px] font-bold bg-[#f0f0f0] hover:bg-[#e2e5e9] border border-[#1e1e1e] rounded cursor-pointer"
+                >
+                  + 챕터/후원사 로고 추가
+                </button>
+                <div className="flex items-center gap-1 font-mono text-[11px]">
+                  <span>해상도 배율:</span>
+                  {([1, 2, 3] as const).map((sc) => (
+                    <button
+                      key={sc}
+                      type="button"
+                      onClick={() => setExportScale(sc)}
+                      className={`px-1.5 py-0.5 rounded border ${
+                        exportScale === sc
+                          ? 'bg-[#1e1e1e] text-white border-[#1e1e1e]'
+                          : 'bg-white text-[#1e1e1e] border-[#1e1e1e]/40'
+                      } cursor-pointer`}
+                    >
+                      {sc}x
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-
-          {/* Bottom Preset Summary Card */}
-          <div className="mt-6 p-3 rounded-xl bg-slate-950/90 border border-slate-800 space-y-1.5 text-[11px] text-slate-400">
-            <div className="font-bold text-slate-200 flex items-center justify-between">
-              <span>💡 용도별 제작 팁</span>
-              <span className="text-[10px] font-mono text-blue-400">{selectedPreset.category.toUpperCase()}</span>
-            </div>
-            <p className="leading-relaxed">{selectedPreset.description}</p>
-          </div>
+          </section>
         </aside>
       </div>
-
-      {/* ==================================================================== */}
-      {/* MODAL 1: DESIGN SYSTEM JSON TOKEN INJECTOR                           */}
-      {/* ==================================================================== */}
-      {showJsonModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-amber-400" />
-                디자인 시스템 JSON 토큰 주입 (Design System Injector)
-              </h3>
-              <button
-                onClick={() => setShowJsonModal(false)}
-                className="text-slate-400 hover:text-white text-sm font-bold"
-              >
-                닫기 ✕
-              </button>
-            </div>
-            <p className="text-xs text-slate-400">
-              행사 브랜드 가이드라인의 컬러 팔레트(`colors`), 타이포그래피(`typography`), 프레임/도형(`shapes`) JSON 토큰을 붙여넣으면 모든 SNS 및 인쇄용 템플릿에 즉시 반영됩니다.
-            </p>
-            <textarea
-              rows={15}
-              value={jsonInputText}
-              onChange={(e) => setJsonInputText(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-emerald-300 focus:outline-none focus:border-amber-500"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowJsonModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700"
-              >
-                취소
-              </button>
-              <button
-                onClick={handleApplyJsonTokens}
-                className="px-5 py-2 rounded-lg text-xs font-bold bg-amber-500 text-slate-950 hover:bg-amber-400"
-              >
-                디자인 시스템 토큰 주입하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================================================================== */}
-      {/* MODAL 2: GCP CLOUD RUN & VERTEX AI DEPLOYMENT STATUS                 */}
-      {/* ==================================================================== */}
-      {showGcpModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-                <Cloud className="w-5 h-5 text-emerald-400" />
-                Google Cloud Platform (GCP) 배포 및 연동 준비 상태
-              </h3>
-              <button
-                onClick={() => setShowGcpModal(false)}
-                className="text-slate-400 hover:text-white text-sm font-bold"
-              >
-                닫기 ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block mb-1">현재 실행 환경</span>
-                <strong className="text-emerald-400 font-mono text-sm">
-                  {gcpStatus?.environment || 'local-dev'}
-                </strong>
-              </div>
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400 block mb-1">GCP Project / Region</span>
-                <strong className="text-slate-200 font-mono text-sm">
-                  {gcpStatus?.gcp?.projectId} ({gcpStatus?.gcp?.region})
-                </strong>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs text-slate-300">
-              <p className="font-bold text-white">✅ 프로젝트 내 준비된 GCP 배포 구성 요소:</p>
-              <ul className="list-disc list-inside space-y-1 text-slate-400">
-                <li>
-                  <code className="text-amber-300">Dockerfile</code> — Next.js Standalone 멀티스테이지 빌드 (Cloud Run 포트 8080 최적화)
-                </li>
-                <li>
-                  <code className="text-amber-300">cloudbuild.yaml</code> — Artifact Registry 이미지 푸시 및 Cloud Run 자동 배포 파이프라인
-                </li>
-                <li>
-                  <code className="text-amber-300">.github/workflows/deploy-gcp.yml</code> — GitHub main 브랜치 푸시 시 Cloud Run 자동 배포 워크플로우
-                </li>
-                <li>
-                  <code className="text-amber-300">scripts/setup-gcp.sh</code> — GCP API 활성화, Artifact Registry, GCS 버킷 원클릭 생성 스크립트
-                </li>
-              </ul>
-            </div>
-
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 font-mono text-[11px] text-blue-300 space-y-1">
-              <p className="text-slate-400"># 1. GCP 초기 리소스 생성</p>
-              <p>./scripts/setup-gcp.sh YOUR_GCP_PROJECT_ID asia-northeast3</p>
-              <p className="text-slate-400 pt-1"># 2. Cloud Build로 즉시 Cloud Run 배포</p>
-              <p>gcloud builds submit --config cloudbuild.yaml</p>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => setShowGcpModal(false)}
-                className="px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-500"
-              >
-                확인
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
+}

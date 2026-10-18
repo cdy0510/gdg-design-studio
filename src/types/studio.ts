@@ -1,134 +1,93 @@
-export type AssetCategory = 'sns' | 'print';
+export type AssetMode = 'speaker' | 'timetable';
 
-export type LayoutTemplateId =
-  | 'speaker-card'
-  | 'session-banner'
-  | 'x-banner'
-  | 'pamphlet-trifold'
-  | 'main-poster'
-  | 'nametag-badge';
+export type SpeakerTemplateVariant =
+  | 'devfest-bracket'
+  | 'track-notch'
+  | 'xbanner-meterboard';
 
-export type SpeakerFrameShape = 'circle' | 'arch' | 'rounded' | 'hexagon' | 'pill';
+export type TimetableTemplateVariant =
+  | 'agenda-digital'
+  | 'agenda-xbanner'
+  | 'agenda-print';
 
-export type PhotoFilterType =
-  | 'none'
-  | 'grayscale'
-  | 'duotone-blue'
-  | 'duotone-warm'
-  | 'contrast';
+export type PhotoFilterType = 'none' | 'grayscale' | 'contrast';
 
-export type PatternStyleType = 'dots' | 'grid' | 'geometric' | 'aurora' | 'none';
+export type DevFestColorwayId =
+  | 'offwhite-classic'
+  | 'pastel-blue'
+  | 'pastel-yellow'
+  | 'pastel-green'
+  | 'pastel-pink'
+  | 'dark-charcoal';
 
-export type ShadowStyleType = 'brutalist' | 'soft' | 'glow' | 'none';
+export interface DevFestColorway {
+  id: DevFestColorwayId;
+  name: string;
+  description: string;
+  canvasBg: string;
+  cardSurface: string;
+  ink: string;
+  mutedInk: string;
+  bracketColor: string;
+  locationPillBg: string;
+  locationPillText: string;
+  yearPillBg: string;
+  yearPillText: string;
+  slashFill: string;
+  caterpillarFill: string;
+  scallopFill: string;
+  timeAccent: string;
+}
 
-export interface CanvasPreset {
+export interface SizePreset {
   id: string;
   name: string;
-  category: AssetCategory;
+  usageLabel: string;
+  category: 'sns' | 'xbanner' | 'print';
   width: number;
   height: number;
-  physicalSize?: string;
   aspectLabel: string;
-  defaultLayout: LayoutTemplateId;
-  description: string;
-  bleedPx?: number;
-  safeMarginPx?: number;
-  foldLines?: number[]; // Normalized 0..1 X positions for pamphlet fold lines
-  hasGrommets?: boolean; // Corner punch marks for X-banners
+  recommendedMode: AssetMode;
+  recommendedSpeakerVariant?: SpeakerTemplateVariant;
+  recommendedTimetableVariant?: TimetableTemplateVariant;
 }
 
-export interface DesignSystemTokens {
+export interface SpeakerSessionItem {
   id: string;
   name: string;
-  description: string;
-  colors: {
-    primary: string;
-    secondary: string;
-    accent: string;
-    success: string;
-    background: string;
-    surface: string;
-    textPrimary: string;
-    textSecondary: string;
-    border: string;
-  };
-  typography: {
-    headingFont: string;
-    bodyFont: string;
-    monoFont: string;
-    headingWeight: '700' | '800' | '900';
-    letterSpacing: string;
-  };
-  shapes: {
-    borderRadius: number;
-    borderWidth: number;
-    shadowStyle: ShadowStyleType;
-    patternStyle: PatternStyleType;
-    speakerFrameShape: SpeakerFrameShape;
-  };
-}
-
-export type BaseAssetType = 'logo' | 'background' | 'frame' | 'sticker' | 'sponsor';
-
-export interface BaseAssetItem {
-  id: string;
-  name: string;
-  type: BaseAssetType;
-  dataUrl: string;
-  opacity: number;
-  scale: number;
-  x: number; // Percentage 0..100
-  y: number; // Percentage 0..100
-  visible: boolean;
-  builtIn?: boolean;
-}
-
-export interface SpeakerProfile {
-  id: string;
-  name: string;
+  affiliation: string;
   role: string;
-  company: string;
-  topic: string;
+  title: string;
+  description: string;
   track: string;
-  dateTime: string;
-  venue: string;
-  bio: string;
-  tags: string[];
+  time: string;
+  room: string;
   photoDataUrl: string;
   photoScale: number;
   photoOffsetX: number;
   photoOffsetY: number;
   photoFilter: PhotoFilterType;
-  accentColorOverride?: string;
-  aiAuraEnabled?: boolean;
 }
 
-export interface PamphletScheduleItem {
-  time: string;
-  title: string;
-  speaker: string;
-  track: string;
+export interface DevFestEventMeta {
+  eventTitle: string; // e.g. 'DevFest'
+  locationText: string; // e.g. 'Seoul' or 'Editable Location'
+  yearText: string; // e.g. '2026'
+  trackHeader: string; // e.g. 'AI & Cloud @DevFest' or 'Track @DevFest'
+  chapterLabel: string; // e.g. 'Google Developer Groups'
+  dateVenueSubtext: string; // e.g. '2026. 11. 14 (SAT) · COEX GRAND BALLROOM'
+  agendaTitle: string; // e.g. 'Agenda'
+  showWireframeGlobe: boolean;
+  showAsteriskSticker: boolean;
+  showCropMarks: boolean;
+  customLogoDataUrl?: string;
 }
 
-export interface EventInfo {
-  eventName: string;
-  subtitle: string;
-  chapterName: string;
-  date: string;
-  location: string;
-  ctaText: string;
-  websiteUrl: string;
-  hashtag: string;
-  pamphletIntro: string;
-  schedule: PamphletScheduleItem[];
-}
-
-export type ExportFormat = 'svg' | 'png' | 'jpg' | 'webp';
+export type ExportFormat = 'png' | 'jpg' | 'svg' | 'webp';
 
 export interface ExportOptions {
   format: ExportFormat;
   scale: 1 | 2 | 3;
   quality: number;
-  includePrintGuides: boolean;
   transparentBg: boolean;
 }

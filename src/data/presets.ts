@@ -1,536 +1,386 @@
 import {
-  BaseAssetItem,
-  CanvasPreset,
-  DesignSystemTokens,
-  EventInfo,
-  SpeakerProfile,
+  DevFestColorway,
+  DevFestEventMeta,
+  SizePreset,
+  SpeakerSessionItem,
 } from '@/types/studio';
 
-function svgToDataUrl(svgString: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svgString.trim())}`;
+function svgToDataUrl(svg: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
 }
 
-export const CANVAS_PRESETS: CanvasPreset[] = [
-  // SNS 홍보용 (Social Media)
+export const SAMPLE_PORTRAITS: string[] = [
+  svgToDataUrl(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+      <rect width="800" height="800" fill="#d9e7fd"/>
+      <circle cx="650" cy="160" r="180" fill="#c3ecf6"/>
+      <rect x="-40" y="520" width="360" height="320" rx="40" fill="#ffe7a5"/>
+      <!-- Stylized studio portrait placeholder -->
+      <path d="M180 800 C195 575 300 490 400 490 C500 490 605 575 620 800 Z" fill="#1e1e1e"/>
+      <path d="M310 505 L400 630 L490 505 Z" fill="#4285f4"/>
+      <rect x="358" y="395" width="84" height="125" rx="36" fill="#f1c29b"/>
+      <ellipse cx="400" cy="295" rx="115" ry="132" fill="#f5cba7"/>
+      <!-- Hair -->
+      <path d="M282 285 C275 170 350 132 425 142 C505 150 532 215 516 292 C495 235 452 212 390 215 C332 218 302 248 282 285 Z" fill="#1e1e1e"/>
+      <!-- Glasses -->
+      <rect x="326" y="272" width="60" height="42" rx="10" fill="none" stroke="#1e1e1e" stroke-width="8"/>
+      <rect x="414" y="272" width="60" height="42" rx="10" fill="none" stroke="#1e1e1e" stroke-width="8"/>
+      <line x1="386" y1="292" x2="414" y2="292" stroke="#1e1e1e" stroke-width="8"/>
+      <!-- Smile -->
+      <path d="M372 356 Q400 378 428 356" fill="none" stroke="#1e1e1e" stroke-width="7" stroke-linecap="round"/>
+      <!-- Mic lapel -->
+      <circle cx="452" cy="590" r="10" fill="#f9ab00" stroke="#1e1e1e" stroke-width="4"/>
+    </svg>
+  `),
+  svgToDataUrl(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+      <rect width="800" height="800" fill="#fde2e2"/>
+      <circle cx="150" cy="170" r="160" fill="#ffe7a5"/>
+      <!-- Shoulders & Jacket -->
+      <path d="M170 800 C190 570 295 495 400 495 C505 495 610 570 630 800 Z" fill="#34a853"/>
+      <path d="M290 515 L400 800 L510 515 Z" fill="#ffffff"/>
+      <!-- Long Hair Back -->
+      <path d="M258 270 C240 430 265 555 290 600 L510 600 C535 555 560 430 542 270 Z" fill="#1e1e1e"/>
+      <rect x="360" y="395" width="80" height="125" rx="35" fill="#f3c6a5"/>
+      <ellipse cx="400" cy="292" rx="110" ry="128" fill="#f7d1b5"/>
+      <!-- Hair Bangs -->
+      <path d="M275 295 C280 165 360 140 415 145 C490 150 530 205 524 300 C488 242 446 210 385 215 C330 220 295 255 275 295 Z" fill="#1e1e1e"/>
+      <circle cx="358" cy="292" r="9" fill="#1e1e1e"/>
+      <circle cx="442" cy="292" r="9" fill="#1e1e1e"/>
+      <path d="M372 352 Q400 376 428 352" fill="none" stroke="#ea4335" stroke-width="8" stroke-linecap="round"/>
+    </svg>
+  `),
+  svgToDataUrl(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+      <rect width="800" height="800" fill="#ccf6c5"/>
+      <circle cx="660" cy="640" r="190" fill="#c3ecf6"/>
+      <path d="M175 800 C195 575 295 495 400 495 C505 495 605 575 625 800 Z" fill="#4285f4"/>
+      <rect x="358" y="395" width="84" height="120" rx="38" fill="#e6b28a"/>
+      <ellipse cx="400" cy="295" rx="114" ry="130" fill="#ecc09c"/>
+      <path d="M286 270 C292 175 352 145 405 145 C468 145 514 185 514 270 C480 228 438 212 398 212 C350 212 312 232 286 270 Z" fill="#1e1e1e"/>
+      <circle cx="358" cy="292" r="9" fill="#1e1e1e"/>
+      <circle cx="442" cy="292" r="9" fill="#1e1e1e"/>
+      <path d="M370 355 Q400 376 430 355" fill="none" stroke="#1e1e1e" stroke-width="7" stroke-linecap="round"/>
+    </svg>
+  `),
+  svgToDataUrl(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+      <rect width="800" height="800" fill="#ffe7a5"/>
+      <circle cx="160" cy="620" r="175" fill="#f8d8d8"/>
+      <path d="M180 800 C198 575 300 495 400 495 C500 495 602 575 620 800 Z" fill="#1e1e1e"/>
+      <rect x="358" y="395" width="84" height="120" rx="38" fill="#f0c09c"/>
+      <ellipse cx="400" cy="295" rx="112" ry="128" fill="#f5cca8"/>
+      <path d="M284 282 C284 170 355 142 415 145 C485 148 522 198 515 282 C482 235 440 215 392 215 C340 215 305 245 284 282 Z" fill="#1e1e1e"/>
+      <circle cx="358" cy="292" r="9" fill="#1e1e1e"/>
+      <circle cx="442" cy="292" r="9" fill="#1e1e1e"/>
+      <path d="M372 354 Q400 375 428 354" fill="none" stroke="#1e1e1e" stroke-width="7" stroke-linecap="round"/>
+    </svg>
+  `),
+];
+
+/**
+ * Official DevFest 2026 Brand Guide Colorways
+ * Exact hex values from the DevFest 2026 Visual Identity slides:
+ * - Off-White: #f0f0f0, Black 02: #1e1e1e
+ * - Core: #4285f4, #34a853, #f9ab00, #ea4335
+ * - Halftones: #57caff, #5cdb6d, #ffd427, #ff7daf
+ * - Pastels: #c3ecf6, #ccf6c5, #ffe7a5, #f8d8d8
+ */
+export const DEVFEST_COLORWAYS: DevFestColorway[] = [
   {
-    id: 'sns-ig-square',
-    name: '인스타그램 피드 (Square)',
+    id: 'offwhite-classic',
+    name: 'Off-White Classic (#f0f0f0)',
+    description: '공식 가이드 기본 오프화이트 배경 + 블루 브래킷 + 옐로우/그린 필',
+    canvasBg: '#f0f0f0',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#4285f4',
+    locationPillBg: '#5cdb6d',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#ffd427',
+    yearPillText: '#1e1e1e',
+    slashFill: '#ffd427',
+    caterpillarFill: '#57caff',
+    scallopFill: '#ff7daf',
+    timeAccent: '#f9ab00',
+  },
+  {
+    id: 'pastel-blue',
+    name: 'Pastel Blue (#c3ecf6)',
+    description: '파스텔 블루 배경 + 하프톤 그린 알약 + 옐로우 슬래시 (공식 연사/타임테이블)',
+    canvasBg: '#c3ecf6',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#4285f4',
+    locationPillBg: '#5cdb6d',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#ffd427',
+    yearPillText: '#1e1e1e',
+    slashFill: '#ffd427',
+    caterpillarFill: '#5cdb6d',
+    scallopFill: '#ff7daf',
+    timeAccent: '#4285f4',
+  },
+  {
+    id: 'pastel-yellow',
+    name: 'Pastel Yellow (#ffe7a5)',
+    description: '파스텔 옐로우 배경 + 하프톤 핑크 알약 + 그린 포인트 (공식 Meterboard/SNS)',
+    canvasBg: '#ffe7a5',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#4285f4',
+    locationPillBg: '#ff7daf',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#5cdb6d',
+    yearPillText: '#1e1e1e',
+    slashFill: '#57caff',
+    caterpillarFill: '#ff7daf',
+    scallopFill: '#5cdb6d',
+    timeAccent: '#ea4335',
+  },
+  {
+    id: 'pastel-green',
+    name: 'Pastel Green (#ccf6c5)',
+    description: '파스텔 그린 배경 + 하프톤 옐로우 알약 + 블루/핑크 포인트',
+    canvasBg: '#ccf6c5',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#34a853',
+    locationPillBg: '#ffd427',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#57caff',
+    yearPillText: '#1e1e1e',
+    slashFill: '#ff7daf',
+    caterpillarFill: '#ffd427',
+    scallopFill: '#57caff',
+    timeAccent: '#34a853',
+  },
+  {
+    id: 'pastel-pink',
+    name: 'Pastel Pink (#f8d8d8)',
+    description: '파스텔 핑크 배경 + 하프톤 블루 알약 + 옐로우 슬래시',
+    canvasBg: '#f8d8d8',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#ea4335',
+    locationPillBg: '#57caff',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#ffd427',
+    yearPillText: '#1e1e1e',
+    slashFill: '#ffd427',
+    caterpillarFill: '#5cdb6d',
+    scallopFill: '#ffd427',
+    timeAccent: '#ea4335',
+  },
+  {
+    id: 'dark-charcoal',
+    name: 'Black 02 Dark (#1e1e1e)',
+    description: '공식 가이드 Black 02 다크 프레임 + 화이트 스텝 카드 + 하프톤 액센트',
+    canvasBg: '#1e1e1e',
+    cardSurface: '#ffffff',
+    ink: '#1e1e1e',
+    mutedInk: '#595959',
+    bracketColor: '#57caff',
+    locationPillBg: '#ffd427',
+    locationPillText: '#1e1e1e',
+    yearPillBg: '#5cdb6d',
+    yearPillText: '#1e1e1e',
+    slashFill: '#ff7daf',
+    caterpillarFill: '#5cdb6d',
+    scallopFill: '#ff7daf',
+    timeAccent: '#f9ab00',
+  },
+];
+
+export const SIZE_PRESETS: SizePreset[] = [
+  {
+    id: 'custom-800x1000',
+    name: 'SNS 홍보 카드 (800 × 1000)',
+    usageLabel: '4:5 SNS 카드 기본',
+    category: 'sns',
+    width: 800,
+    height: 1000,
+    aspectLabel: '4:5',
+    recommendedMode: 'speaker',
+    recommendedSpeakerVariant: 'devfest-bracket',
+    recommendedTimetableVariant: 'agenda-digital',
+  },
+  {
+    id: 'sns-square-1080',
+    name: 'Instagram 정방형 (1080 × 1080)',
+    usageLabel: '1:1 피드',
     category: 'sns',
     width: 1080,
     height: 1080,
-    aspectLabel: '1:1 (1080×1080)',
-    defaultLayout: 'speaker-card',
-    description: 'SNS 연사자 소개 카드 및 핵심 세션 홍보용 정방형 규격',
+    aspectLabel: '1:1',
+    recommendedMode: 'speaker',
+    recommendedSpeakerVariant: 'devfest-bracket',
+    recommendedTimetableVariant: 'agenda-digital',
   },
   {
-    id: 'sns-ig-portrait',
-    name: '인스타그램 포스터 (Portrait)',
+    id: 'sns-portrait-1080x1350',
+    name: 'Instagram 세로형 (1080 × 1350)',
+    usageLabel: '4:5 고해상도 피드',
     category: 'sns',
     width: 1080,
     height: 1350,
-    aspectLabel: '4:5 (1080×1350)',
-    defaultLayout: 'main-poster',
-    description: '모바일 피드 점유율이 가장 높은 세로형 홍보 포스터 규격',
+    aspectLabel: '4:5',
+    recommendedMode: 'speaker',
+    recommendedSpeakerVariant: 'track-notch',
+    recommendedTimetableVariant: 'agenda-digital',
   },
   {
-    id: 'sns-story',
-    name: '인스타그램 스토리 / 릴스',
-    category: 'sns',
-    width: 1080,
-    height: 1920,
-    aspectLabel: '9:16 (1080×1920)',
-    defaultLayout: 'speaker-card',
-    description: '스토리 카운트다운 및 모바일 풀스크린 연사자 하이라이트',
-  },
-  {
-    id: 'sns-linkedin',
-    name: '링크드인 / X(트위터) 배너',
-    category: 'sns',
-    width: 1200,
-    height: 628,
-    aspectLabel: '1.91:1 (1200×628)',
-    defaultLayout: 'session-banner',
-    description: '외부 공유 링크 오픈그래프(OG) 및 타임라인 세션 홍보 배너',
-  },
-  {
-    id: 'sns-youtube',
-    name: '유튜브 썸네일 / 세션 커버',
+    id: 'sns-landscape-1920x1080',
+    name: 'SNS 와이드 / 세션 배너 (1920 × 1080)',
+    usageLabel: '16:9 가로형 홍보/시간표',
     category: 'sns',
     width: 1920,
     height: 1080,
-    aspectLabel: '16:9 (1920×1080)',
-    defaultLayout: 'session-banner',
-    description: '세션 발표 장표 대기 화면 및 유튜브 다시보기 썸네일',
+    aspectLabel: '16:9',
+    recommendedMode: 'timetable',
+    recommendedSpeakerVariant: 'track-notch',
+    recommendedTimetableVariant: 'agenda-digital',
   },
-
-  // 인쇄용 (Print - X배너, 팜플렛, 포스터, 네임택)
   {
-    id: 'print-xbanner',
-    name: '실내용/실외용 X배너 (스탠드)',
-    category: 'print',
+    id: 'sns-story-1080x1920',
+    name: 'SNS 스토리 / 릴스 (1080 × 1920)',
+    usageLabel: '9:16 모바일 풀스크린',
+    category: 'sns',
+    width: 1080,
+    height: 1920,
+    aspectLabel: '9:16',
+    recommendedMode: 'timetable',
+    recommendedSpeakerVariant: 'devfest-bracket',
+    recommendedTimetableVariant: 'agenda-digital',
+  },
+  {
+    id: 'xbanner-1200x3600',
+    name: '실내용 X배너 / 스탠딩 배너 (1200 × 3600)',
+    usageLabel: '600×1800mm (1:3 인쇄비율)',
+    category: 'xbanner',
     width: 1200,
     height: 3600,
-    physicalSize: '600 × 1800 mm',
-    aspectLabel: '1:3 (600×1800mm)',
-    defaultLayout: 'x-banner',
-    description: '행사장 입구 및 트랙 안내용 표준 X배너 (사방 아일렛 타공 영역 포함)',
-    bleedPx: 30,
-    safeMarginPx: 90,
-    hasGrommets: true,
+    aspectLabel: '1:3',
+    recommendedMode: 'timetable',
+    recommendedSpeakerVariant: 'xbanner-meterboard',
+    recommendedTimetableVariant: 'agenda-xbanner',
   },
   {
-    id: 'print-pamphlet-trifold',
-    name: '3단 접지 팜플렛 / 리플렛 (A4 가로)',
+    id: 'print-a4-1600x2263',
+    name: 'A4 인쇄용 시간표 / 포스터 (1600 × 2263)',
+    usageLabel: 'A4 세로 규격 (1:1.414)',
     category: 'print',
-    width: 2480,
-    height: 1754,
-    physicalSize: '297 × 210 mm (A4 3단)',
-    aspectLabel: 'A4 Landscape (3단 접지)',
-    defaultLayout: 'pamphlet-trifold',
-    description: '행사 개요·타임테이블·연사자 하이라이트가 포함된 3단 접지 인쇄물',
-    bleedPx: 36,
-    safeMarginPx: 72,
-    foldLines: [0.3333, 0.6667],
-  },
-  {
-    id: 'print-poster-a2',
-    name: '행사 메인 포스터 (A2/A3 인쇄용)',
-    category: 'print',
-    width: 1414,
-    height: 2000,
-    physicalSize: '420 × 594 mm (A2)',
-    aspectLabel: '1:√2 (ISO A2/A3)',
-    defaultLayout: 'main-poster',
-    description: '행사장 벽면 부착용 고해상도 인쇄 포스터 (재단선 포함)',
-    bleedPx: 28,
-    safeMarginPx: 70,
-  },
-  {
-    id: 'print-badge',
-    name: '연사자 / 스태프 네임택 배지',
-    category: 'print',
-    width: 1000,
-    height: 1400,
-    physicalSize: '100 × 140 mm',
-    aspectLabel: '5:7 (100×140mm)',
-    defaultLayout: 'nametag-badge',
-    description: '목걸이형 패스 및 연사자 식별 카드 인쇄 규격',
-    bleedPx: 24,
-    safeMarginPx: 60,
+    width: 1600,
+    height: 2263,
+    aspectLabel: 'A4',
+    recommendedMode: 'timetable',
+    recommendedSpeakerVariant: 'devfest-bracket',
+    recommendedTimetableVariant: 'agenda-print',
   },
 ];
 
-export const DESIGN_SYSTEM_PRESETS: DesignSystemTokens[] = [
-  {
-    id: 'gdg-classic',
-    name: 'GDG Classic (4-Color Neo)',
-    description: 'Google 4원색과 볼드한 아웃라인을 결합한 GDG 시그니처 디자인 시스템',
-    colors: {
-      primary: '#4285F4',
-      secondary: '#EA4335',
-      accent: '#FBBC04',
-      success: '#34A853',
-      background: '#F8F9FA',
-      surface: '#FFFFFF',
-      textPrimary: '#202124',
-      textSecondary: '#5F6368',
-      border: '#202124',
-    },
-    typography: {
-      headingFont: 'Pretendard, Google Sans, sans-serif',
-      bodyFont: 'Pretendard, Google Sans, sans-serif',
-      monoFont: 'JetBrains Mono, monospace',
-      headingWeight: '900',
-      letterSpacing: '-0.03em',
-    },
-    shapes: {
-      borderRadius: 28,
-      borderWidth: 4,
-      shadowStyle: 'brutalist',
-      patternStyle: 'dots',
-      speakerFrameShape: 'arch',
-    },
-  },
-  {
-    id: 'devfest-dark',
-    name: 'DevFest Dark Cyber',
-    description: '다크 모드 배경 위에 네온 악센트와 그리드가 돋보이는 테크 컨퍼런스 테마',
-    colors: {
-      primary: '#8AB4F8',
-      secondary: '#F28B82',
-      accent: '#FDD663',
-      success: '#81C995',
-      background: '#0F141C',
-      surface: '#1A2230',
-      textPrimary: '#F1F3F4',
-      textSecondary: '#9AA0A6',
-      border: '#8AB4F8',
-    },
-    typography: {
-      headingFont: 'Pretendard, Google Sans, sans-serif',
-      bodyFont: 'Pretendard, sans-serif',
-      monoFont: 'JetBrains Mono, monospace',
-      headingWeight: '800',
-      letterSpacing: '-0.02em',
-    },
-    shapes: {
-      borderRadius: 24,
-      borderWidth: 2,
-      shadowStyle: 'glow',
-      patternStyle: 'grid',
-      speakerFrameShape: 'hexagon',
-    },
-  },
-  {
-    id: 'build-with-ai',
-    name: 'Build with AI (Gemini Era)',
-    description: 'Gemini 딥 인디고 & 스파크 오로라 그라데이션 기반 AI 행사 전용 시스템',
-    colors: {
-      primary: '#4E6EF2',
-      secondary: '#A142F4',
-      accent: '#24C1E0',
-      success: '#34A853',
-      background: '#0B0F29',
-      surface: '#161C42',
-      textPrimary: '#FFFFFF',
-      textSecondary: '#B8C4E8',
-      border: '#5E7CE2',
-    },
-    typography: {
-      headingFont: 'Pretendard, Google Sans, sans-serif',
-      bodyFont: 'Pretendard, sans-serif',
-      monoFont: 'JetBrains Mono, monospace',
-      headingWeight: '800',
-      letterSpacing: '-0.025em',
-    },
-    shapes: {
-      borderRadius: 32,
-      borderWidth: 2,
-      shadowStyle: 'glow',
-      patternStyle: 'aurora',
-      speakerFrameShape: 'circle',
-    },
-  },
-  {
-    id: 'io-extended-pastel',
-    name: 'I/O Extended Pastel',
-    description: '따뜻한 크림 톤 배경과 기하학적 도형이 어우러진 페스티벌 무드 테마',
-    colors: {
-      primary: '#1A73E8',
-      secondary: '#E8710A',
-      accent: '#F9AB00',
-      success: '#1E8E3E',
-      background: '#FFFDF7',
-      surface: '#FFF4D6',
-      textPrimary: '#1F1F1F',
-      textSecondary: '#474747',
-      border: '#1F1F1F',
-    },
-    typography: {
-      headingFont: 'Pretendard, Google Sans, sans-serif',
-      bodyFont: 'Pretendard, sans-serif',
-      monoFont: 'JetBrains Mono, monospace',
-      headingWeight: '900',
-      letterSpacing: '-0.03em',
-    },
-    shapes: {
-      borderRadius: 36,
-      borderWidth: 4,
-      shadowStyle: 'brutalist',
-      patternStyle: 'geometric',
-      speakerFrameShape: 'pill',
-    },
-  },
-  {
-    id: 'cloud-summit-clean',
-    name: 'Cloud Summit Minimal',
-    description: '깔끔한 엔터프라이즈 화이트 & 블루 톤의 정돈된 컨퍼런스 디자인 시스템',
-    colors: {
-      primary: '#1967D2',
-      secondary: '#D93025',
-      accent: '#F9AB00',
-      success: '#188038',
-      background: '#FFFFFF',
-      surface: '#F1F5F9',
-      textPrimary: '#0F172A',
-      textSecondary: '#475569',
-      border: '#CBD5E1',
-    },
-    typography: {
-      headingFont: 'Pretendard, Google Sans, sans-serif',
-      bodyFont: 'Pretendard, sans-serif',
-      monoFont: 'JetBrains Mono, monospace',
-      headingWeight: '700',
-      letterSpacing: '-0.015em',
-    },
-    shapes: {
-      borderRadius: 16,
-      borderWidth: 2,
-      shadowStyle: 'soft',
-      patternStyle: 'none',
-      speakerFrameShape: 'rounded',
-    },
-  },
-];
-
-// Built-in SVG portraits for immediate speaker merging demo
-const SPEAKER_AVATAR_1 = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
-  <defs>
-    <linearGradient id="bg1" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#DBEAFE"/>
-      <stop offset="100%" stop-color="#93C5FD"/>
-    </linearGradient>
-    <linearGradient id="suit1" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1E3A8A"/>
-      <stop offset="100%" stop-color="#0F172A"/>
-    </linearGradient>
-  </defs>
-  <rect width="600" height="600" fill="url(#bg1)"/>
-  <circle cx="480" cy="110" r="70" fill="#60A5FA" opacity="0.35"/>
-  <circle cx="110" cy="480" r="90" fill="#3B82F6" opacity="0.25"/>
-  <!-- Shoulders / Jacket -->
-  <path d="M100 600 C115 440, 200 400, 300 400 C400 400, 485 440, 500 600 Z" fill="url(#suit1)"/>
-  <!-- Inner Shirt -->
-  <path d="M245 405 L300 500 L355 405 Z" fill="#FFFFFF"/>
-  <!-- Neck -->
-  <rect x="262" y="330" width="76" height="90" rx="28" fill="#F1C27D"/>
-  <!-- Head -->
-  <ellipse cx="300" cy="255" rx="92" ry="108" fill="#F5CBA7"/>
-  <!-- Hair -->
-  <path d="M202 250 C195 160, 245 120, 315 125 C385 130, 412 180, 396 250 C385 200, 355 175, 295 178 C240 180, 215 208, 202 250 Z" fill="#1E293B"/>
-  <!-- Glasses -->
-  <rect x="234" y="226" width="54" height="38" rx="10" fill="none" stroke="#0F172A" stroke-width="6"/>
-  <rect x="312" y="226" width="54" height="38" rx="10" fill="none" stroke="#0F172A" stroke-width="6"/>
-  <line x1="288" y1="244" x2="312" y2="244" stroke="#0F172A" stroke-width="6"/>
-  <!-- Eyes -->
-  <circle cx="261" cy="245" r="6" fill="#0F172A"/>
-  <circle cx="339" cy="245" r="6" fill="#0F172A"/>
-  <!-- Smile -->
-  <path d="M270 302 Q300 326 330 302" fill="none" stroke="#0F172A" stroke-width="6" stroke-linecap="round"/>
-  <!-- GDG Lapel Pin -->
-  <circle cx="375" cy="485" r="12" fill="#FBBC04"/>
-  <circle cx="395" cy="485" r="12" fill="#EA4335"/>
-</svg>
-`);
-
-const SPEAKER_AVATAR_2 = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
-  <defs>
-    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#FCE7F3"/>
-      <stop offset="100%" stop-color="#FDE68A"/>
-    </linearGradient>
-  </defs>
-  <rect width="600" height="600" fill="url(#bg2)"/>
-  <circle cx="130" cy="130" r="65" fill="#F472B6" opacity="0.25"/>
-  <!-- Long Hair Back -->
-  <path d="M180 230 C165 360, 175 490, 210 560 L390 560 C425 490, 435 360, 420 230 Z" fill="#27272A"/>
-  <!-- Shoulders / Blazer -->
-  <path d="M110 600 C130 450, 210 410, 300 410 C390 410, 470 450, 490 600 Z" fill="#EA4335"/>
-  <path d="M250 412 L300 520 L350 412 Z" fill="#FFFBEB"/>
-  <!-- Neck -->
-  <rect x="266" y="335" width="68" height="88" rx="26" fill="#F5CBA7"/>
-  <!-- Head -->
-  <ellipse cx="300" cy="255" rx="88" ry="104" fill="#FDEBD0"/>
-  <!-- Hair Front -->
-  <path d="M206 245 C206 155, 255 125, 305 125 C365 125, 402 165, 396 250 C375 195, 335 170, 285 180 C245 188, 220 212, 206 245 Z" fill="#27272A"/>
-  <!-- Eyes -->
-  <circle cx="265" cy="248" r="7" fill="#18181B"/>
-  <circle cx="335" cy="248" r="7" fill="#18181B"/>
-  <!-- Smile -->
-  <path d="M273 300 Q300 322 327 300" fill="none" stroke="#E11D48" stroke-width="6" stroke-linecap="round"/>
-</svg>
-`);
-
-const SPEAKER_AVATAR_3 = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
-  <defs>
-    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#DCFCE7"/>
-      <stop offset="100%" stop-color="#A7F3D0"/>
-    </linearGradient>
-  </defs>
-  <rect width="600" height="600" fill="url(#bg3)"/>
-  <!-- Hoodie / Casual Tech -->
-  <path d="M95 600 C115 445, 200 405, 300 405 C400 405, 485 445, 505 600 Z" fill="#065F46"/>
-  <!-- Neck -->
-  <rect x="262" y="332" width="76" height="88" rx="28" fill="#E5B887"/>
-  <!-- Head -->
-  <ellipse cx="300" cy="255" rx="90" ry="106" fill="#F0C8A0"/>
-  <!-- Curly/Wavy Hair -->
-  <path d="M205 235 C195 150, 250 115, 300 118 C355 115, 405 155, 395 235 C375 185, 340 168, 300 168 C260 168, 225 185, 205 235 Z" fill="#111827"/>
-  <!-- Eyes -->
-  <circle cx="264" cy="248" r="6.5" fill="#111827"/>
-  <circle cx="336" cy="248" r="6.5" fill="#111827"/>
-  <!-- Smile -->
-  <path d="M272 302 Q300 324 328 302" fill="none" stroke="#111827" stroke-width="6" stroke-linecap="round"/>
-</svg>
-`);
-
-export const DEFAULT_SPEAKERS: SpeakerProfile[] = [
+export const INITIAL_SPEAKER_SESSIONS: SpeakerSessionItem[] = [
   {
     id: 'spk-1',
-    name: '김도윤 (Doyun Kim)',
-    role: 'Google Developer Expert · AI/ML',
-    company: 'Cloud Native Lab',
-    topic: 'Vertex AI와 Gemini 2.5로 구축하는 프로덕션 멀티 에이전트 아키텍처',
-    track: 'Track A · AI & Cloud',
-    dateTime: '2026. 11. 14 (토) 14:00 - 14:50',
-    venue: '코엑스 그랜드볼룸 101호',
-    bio: '대규모 생성형 AI 파이프라인과 GCP Cloud Run 기반 서버리스 백엔드 아키텍처를 설계하고 있습니다.',
-    tags: ['#VertexAI', '#Gemini', '#CloudRun', '#MultiAgent'],
-    photoDataUrl: SPEAKER_AVATAR_1,
+    name: '김지훈',
+    affiliation: 'Google Cloud Korea',
+    role: 'Staff Customer Engineer',
+    title: 'Gemini 2.5와 Vertex AI로 구축하는 프로덕션 멀티 에이전트 아키텍처',
+    description:
+      '실제 엔터프라이즈 환경에서 컨텍스트 압축, 도구 호출 안정성, 레이턴시 최적화를 달성한 설계 패턴을 공유합니다.',
+    track: 'AI & Cloud',
+    time: '13:00 - 13:50',
+    room: 'Hall A (오디토리움)',
+    photoDataUrl: SAMPLE_PORTRAITS[0],
     photoScale: 1,
     photoOffsetX: 0,
     photoOffsetY: 0,
     photoFilter: 'none',
-    aiAuraEnabled: true,
   },
   {
     id: 'spk-2',
-    name: '박서연 (Seoyeon Park)',
-    role: 'Staff Frontend Architect',
-    company: 'NextGen Studio',
-    topic: '디자인 시스템 토큰 자동화와 웹 캔버스 렌더링 최적화 실전 가이드',
-    track: 'Track B · Web & Design System',
-    dateTime: '2026. 11. 14 (토) 15:10 - 16:00',
-    venue: '코엑스 그랜드볼룸 102호',
-    bio: '피그마 디자인 토큰과 프로덕션 코드 사이의 간극을 줄이는 디자인 엔지니어링을 연구합니다.',
-    tags: ['#DesignSystem', '#WebCanvas', '#SVG', '#NextJS'],
-    photoDataUrl: SPEAKER_AVATAR_2,
+    name: '박소연',
+    affiliation: 'Toss (Viva Republic)',
+    role: 'Frontend Platform Lead',
+    title: '대규모 웹 애플리케이션을 위한 디자인 시스템 토큰 파이프라인',
+    description:
+      'Figma 변수부터 CSS 런타임, SVG 에셋 자동 생성까지 디자이너와 엔지니어의 간극을 줄인 실전 워크플로우를 다룹니다.',
+    track: 'Web & Design',
+    time: '14:00 - 14:50',
+    room: 'Hall B (세미나실 101)',
+    photoDataUrl: SAMPLE_PORTRAITS[1],
     photoScale: 1,
     photoOffsetX: 0,
     photoOffsetY: 0,
     photoFilter: 'none',
-    aiAuraEnabled: false,
   },
   {
     id: 'spk-3',
-    name: '이준혁 (Junhyuk Lee)',
-    role: 'Principal Android Engineer',
-    company: 'Mobility Tech',
-    topic: 'Kotlin Multiplatform과 온디바이스 Gemini Nano 통합 전략',
-    track: 'Track C · Mobile & On-Device AI',
-    dateTime: '2026. 11. 14 (토) 16:20 - 17:10',
-    venue: '코엑스 그랜드볼룸 103호',
-    bio: '안드로이드 및 크로스플랫폼 환경에서 빠르고 안전한 온디바이스 AI 경험을 구축합니다.',
-    tags: ['#Android', '#KMP', '#GeminiNano', '#Mobile'],
-    photoDataUrl: SPEAKER_AVATAR_3,
+    name: '이도현',
+    affiliation: 'Karrot (당근)',
+    role: 'Staff Android Engineer',
+    title: 'Kotlin Multiplatform과 Compose로 하나의 코드베이스에서 60fps 달성하기',
+    description:
+      '안드로이드와 iOS 양쪽에서 네이티브 수준의 렌더링 성능과 메모리 안정성을 확보한 프로파일링 사례를 소개합니다.',
+    track: 'Mobile',
+    time: '15:10 - 16:00',
+    room: 'Hall A (오디토리움)',
+    photoDataUrl: SAMPLE_PORTRAITS[2],
     photoScale: 1,
     photoOffsetX: 0,
     photoOffsetY: 0,
     photoFilter: 'none',
-    aiAuraEnabled: false,
+  },
+  {
+    id: 'spk-4',
+    name: '최윤서',
+    affiliation: 'DeepMind Open Source Contributor',
+    role: 'ML Systems Engineer',
+    title: '온디바이스 추론 최적화: WebGPU와 경량 모델 양자화 실전 가이드',
+    description:
+      '서버 비용 없이 브라우저와 모바일 기기에서 실시간 추론을 구동하기 위한 양자화 및 셰이더 튜닝 기법을 알아봅니다.',
+    track: 'AI & Cloud',
+    time: '16:10 - 17:00',
+    room: 'Hall A (오디토리움)',
+    photoDataUrl: SAMPLE_PORTRAITS[3],
+    photoScale: 1,
+    photoOffsetX: 0,
+    photoOffsetY: 0,
+    photoFilter: 'none',
+  },
+  {
+    id: 'spk-5',
+    name: '정현우',
+    affiliation: 'LINE Plus',
+    role: 'Principal Infrastructure Engineer',
+    title: 'Kubernetes 멀티 클러스터 환경에서의 Zero-Downtime 메시 마이그레이션',
+    description:
+      '수억 건의 일일 트래픽을 무중단으로 전환하기 위해 설계한 카나리 검증 파이프라인과 관측성(Observability) 체계를 설명합니다.',
+    track: 'Cloud & Infra',
+    time: '17:10 - 18:00',
+    room: 'Hall B (세미나실 101)',
+    photoDataUrl: SAMPLE_PORTRAITS[0],
+    photoScale: 1,
+    photoOffsetX: 0,
+    photoOffsetY: 0,
+    photoFilter: 'none',
   },
 ];
 
-// Built-in Base Assets (GDG Logo, DevFest Sticker, Geometric Frame)
-const BUILTIN_GDG_LOGO = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" width="240" height="80">
-  <g transform="translate(10, 12)">
-    <path d="M32 8 L8 28 L32 48" fill="none" stroke="#EA4335" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M48 8 L72 28 L48 48" fill="none" stroke="#4285F4" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="40" cy="28" r="6" fill="#FBBC04"/>
-  </g>
-  <text x="98" y="48" font-family="Pretendard, Google Sans, sans-serif" font-weight="900" font-size="32" fill="#202124">GDG</text>
-</svg>
-`);
-
-const BUILTIN_DEVFEST_STICKER = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 90" width="220" height="90">
-  <rect x="6" y="6" width="204" height="74" rx="37" fill="#FBBC04" stroke="#202124" stroke-width="5"/>
-  <circle cx="42" cy="43" r="14" fill="#EA4335" stroke="#202124" stroke-width="3"/>
-  <text x="68" y="51" font-family="JetBrains Mono, monospace" font-weight="800" font-size="22" fill="#202124">DEVFEST '26</text>
-</svg>
-`);
-
-const BUILTIN_SPONSOR_BAR = svgToDataUrl(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 70" width="500" height="70">
-  <rect x="2" y="2" width="496" height="66" rx="16" fill="#FFFFFF" fill-opacity="0.9" stroke="#202124" stroke-width="3"/>
-  <text x="24" y="41" font-family="Pretendard, sans-serif" font-weight="700" font-size="16" fill="#5F6368">PARTNERS</text>
-  <circle cx="145" cy="35" r="8" fill="#4285F4"/>
-  <circle cx="163" cy="35" r="8" fill="#EA4335"/>
-  <circle cx="181" cy="35" r="8" fill="#FBBC04"/>
-  <circle cx="199" cy="35" r="8" fill="#34A853"/>
-  <text x="220" y="41" font-family="Pretendard, sans-serif" font-weight="800" font-size="18" fill="#202124">Google for Developers · Cloud</text>
-</svg>
-`);
-
-export const DEFAULT_BASE_ASSETS: BaseAssetItem[] = [
-  {
-    id: 'asset-gdg-logo',
-    name: 'GDG 공식 브래킷 로고 (Built-in)',
-    type: 'logo',
-    dataUrl: BUILTIN_GDG_LOGO,
-    opacity: 1,
-    scale: 1,
-    x: 8,
-    y: 7,
-    visible: true,
-    builtIn: true,
-  },
-  {
-    id: 'asset-devfest-sticker',
-    name: 'DevFest 2026 뱃지 스티커',
-    type: 'sticker',
-    dataUrl: BUILTIN_DEVFEST_STICKER,
-    opacity: 1,
-    scale: 0.9,
-    x: 78,
-    y: 8,
-    visible: true,
-    builtIn: true,
-  },
-  {
-    id: 'asset-sponsor-bar',
-    name: '하단 파트너/스폰서 바',
-    type: 'sponsor',
-    dataUrl: BUILTIN_SPONSOR_BAR,
-    opacity: 0.95,
-    scale: 0.85,
-    x: 50,
-    y: 93,
-    visible: false,
-    builtIn: true,
-  },
-];
-
-export const DEFAULT_EVENT_INFO: EventInfo = {
-  eventName: 'GDG DevFest Seoul 2026',
-  subtitle: 'Build with AI, Cloud & Open Web Community',
-  chapterName: 'GDG Seoul · Korea',
-  date: '2026. 11. 14 (SAT) 10:00 - 18:00',
-  location: 'COEX Grand Ballroom, Seoul',
-  ctaText: '지금 참가 신청하기 · gdg.community.dev',
-  websiteUrl: 'https://gdg.community.dev',
-  hashtag: '#GDG #DevFest2026 #BuildWithAI',
-  pamphletIntro:
-    '개발자 커뮤니티가 함께 만드는 연례 최대 기술 페스티벌! AI, Cloud, Android, Web 트랙의 실전 세션을 만나보세요.',
-  schedule: [
-    {
-      time: '10:30 - 11:20',
-      title: 'Keynote: 에이전틱 AI 시대의 개발자 생태계',
-      speaker: 'GDG Organizers & Google Developer Relations',
-      track: 'Main Hall',
-    },
-    {
-      time: '14:00 - 14:50',
-      title: 'Vertex AI와 Gemini 2.5로 구축하는 프로덕션 멀티 에이전트',
-      speaker: '김도윤 · Cloud Native Lab',
-      track: 'Track A (AI/Cloud)',
-    },
-    {
-      time: '15:10 - 16:00',
-      title: '디자인 시스템 토큰 자동화와 웹 캔버스 렌더링 최적화',
-      speaker: '박서연 · NextGen Studio',
-      track: 'Track B (Web/Design)',
-    },
-    {
-      time: '16:20 - 17:10',
-      title: 'Kotlin Multiplatform과 온디바이스 Gemini Nano 통합 전략',
-      speaker: '이준혁 · Mobility Tech',
-      track: 'Track C (Mobile)',
-    },
-  ],
+export const INITIAL_EVENT_META: DevFestEventMeta = {
+  eventTitle: 'DevFest',
+  locationText: 'Seoul',
+  yearText: '2026',
+  trackHeader: 'AI & Cloud @DevFest',
+  chapterLabel: 'Google Developer Groups',
+  dateVenueSubtext: '2026. 11. 14 (SAT) · COEX GRAND BALLROOM',
+  agendaTitle: 'Agenda',
+  showWireframeGlobe: true,
+  showAsteriskSticker: true,
+  showCropMarks: false,
 };

@@ -2,60 +2,120 @@
 
 import React from 'react';
 import {
-  BaseAssetItem,
-  CanvasPreset,
-  DesignSystemTokens,
-  EventInfo,
-  LayoutTemplateId,
-  SpeakerFrameShape,
-  SpeakerProfile,
+  AssetMode,
+  DevFestColorway,
+  DevFestEventMeta,
+  SpeakerSessionItem,
+  SpeakerTemplateVariant,
+  TimetableTemplateVariant,
 } from '@/types/studio';
 
 interface CanvasSvgRendererProps {
   svgRef?: React.RefObject<SVGSVGElement | null>;
-  preset: CanvasPreset;
-  layout: LayoutTemplateId;
-  designSystem: DesignSystemTokens;
-  speaker: SpeakerProfile;
-  allSpeakers: SpeakerProfile[];
-  eventInfo: EventInfo;
-  baseAssets: BaseAssetItem[];
-  showPrintGuides: boolean;
-  transparentBg: boolean;
+  width: number;
+  height: number;
+  mode: AssetMode;
+  speakerVariant: SpeakerTemplateVariant;
+  timetableVariant: TimetableTemplateVariant;
+  colorway: DevFestColorway;
+  activeSpeaker: SpeakerSessionItem;
+  sessions: SpeakerSessionItem[];
+  eventMeta: DevFestEventMeta;
 }
 
 /**
- * Splits a text string into multiple lines based on approximate character width
- * (accounting for CJK full-width characters vs ASCII half-width characters).
+ * Given an ordered array of orthogonal polygon vertices [[x0,y0], [x1,y1], ...],
+ * generates an SVG path string with smooth rounded corners (both convex and concave steps).
  */
-function wrapTextLines(text: string, maxUnitsPerLine: number, maxLines = 4): string[] {
-  if (!text) return [''];
-  const words = text.split(/\s+/);
+function buildOrthogonalRoundedPath(
+  pts: Array<[number, number]>,
+  defaultRadius: number
+): string {
+  const n = pts.length;
+  if (n < 3) return '';
+
+  const segments: string[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n];
+    const curr = pts[i];
+    const next = pts[(i + 1) % n];
+
+    const v1x = curr[0] - prev[0];
+    const v1y = curr[1] - prev[1];
+    const len1 = Math.hypot(v1x, v1y);
+
+    const v2x = next[0] - curr[0];
+    const v2y = next[1] - curr[1];
+    const len2 = Math.hypot(v2x, v2y);
+
+    if (len1 === 0 || len2 === 0) continue;
+
+    const r = Math.min(defaultRadius, len1 * 0.45, len2 * 0.45);
+
+    const u1x = v1x / len1;
+    const u1y = v1y / len1;
+    const u2x = v2x / len2;
+    const u2y = v2y / len2;
+
+    const startX = curr[0] - u1x * r;
+    const startY = curr[1] - u1y * r;
+    const endX = curr[0] + u2x * r;
+    const endY = curr[1] + u2y * r;
+
+    if (i === 0) {
+      segments.push(`M ${startX.toFixed(1)} ${startY.toFixed(1)}`);
+    } else {
+      segments.push(`L ${startX.toFixed(1)} ${startY.toFixed(1)}`);
+    }
+
+    // Cross product determines turn direction (sweep flag for circular arc)
+    const cross = u1x * u2y - u1y * u2x;
+    const sweep = cross > 0 ? 1 : 0;
+    segments.push(
+      `A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${sweep} ${endX.toFixed(1)} ${endY.toFixed(1)}`
+    );
+  }
+
+  segments.push('Z');
+  return segments.join(' ');
+}
+
+/**
+ * Simple line-wrapping helper for SVG text elements.
+ * Supports Korean + English mixed strings by estimating character width units.
+ */
+function wrapTextLines(
+  text: string,
+  maxUnitsPerLine: number,
+  maxLines: number
+): string[] {
+  if (!text) return [];
+  const words = text.trim().split(/\s+/);
   const lines: string[] = [];
   let currentLine = '';
   let currentUnits = 0;
 
-  const measureUnits = (str: string) => {
-    let u = 0;
-    for (let i = 0; i < str.length; i++) {
-      const code = str.charCodeAt(i);
-      u += code > 255 ? 1.85 : 1.0;
+  const charUnits = (str: string) => {
+    let total = 0;
+    for (const ch of str) {
+      total += ch.charCodeAt(0) > 255 ? 1.75 : 1.0;
     }
-    return u;
+    return total;
   };
 
   for (const word of words) {
-    const wordUnits = measureUnits(word);
+    const wUnits = charUnits(word);
     if (!currentLine) {
       currentLine = word;
-      currentUnits = wordUnits;
-    } else if (currentUnits + 1 + wordUnits <= maxUnitsPerLine) {
-      currentLine += ' ' + word;
-      currentUnits += 1 + wordUnits;
+      currentUnits = wUnits;
+    } else if (currentUnits + 1 + wUnits <= maxUnitsPerLine) {
+      currentLine += ` ${word}`;
+      currentUnits += 1 + wUnits;
     } else {
       lines.push(currentLine);
       currentLine = word;
-      currentUnits = wordUnits;
+      currentUnits = wUnits;
     }
   }
   if (currentLine) {
@@ -64,7 +124,7 @@ function wrapTextLines(text: string, maxUnitsPerLine: number, maxLines = 4): str
 
   if (lines.length > maxLines) {
     const sliced = lines.slice(0, maxLines);
-    sliced[maxLines - 1] = sliced[maxLines - 1].replace(/\.*$/, '') + '…';
+    sliced[maxLines - 1] = sliced[maxLines - 1].replace(/[.,\s]*$/, '') + '…';
     return sliced;
   }
 
@@ -72,188 +132,647 @@ function wrapTextLines(text: string, maxUnitsPerLine: number, maxLines = 4): str
 }
 
 /**
- * Generates an SVG path for various speaker frame shapes centered at (cx, cy) with size (w, h).
+ * Official GDG `< >` 4-color outlined capsule logo
  */
-function getSpeakerFramePath(
-  shape: SpeakerFrameShape,
-  cx: number,
-  cy: number,
-  w: number,
-  h: number,
-  radius: number
-): string {
-  const x = cx - w / 2;
-  const y = cy - h / 2;
-
-  switch (shape) {
-    case 'circle': {
-      const r = Math.min(w, h) / 2;
-      return `M ${cx - r}, ${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0`;
-    }
-    case 'arch': {
-      const rTop = w / 2;
-      const rBottom = Math.min(32, radius);
-      return [
-        `M ${x} ${y + rTop}`,
-        `A ${rTop} ${rTop} 0 0 1 ${x + w} ${y + rTop}`,
-        `L ${x + w} ${y + h - rBottom}`,
-        `Q ${x + w} ${y + h} ${x + w - rBottom} ${y + h}`,
-        `L ${x + rBottom} ${y + h}`,
-        `Q ${x} ${y + h} ${x} ${y + h - rBottom}`,
-        'Z',
-      ].join(' ');
-    }
-    case 'hexagon': {
-      const rx = w / 2;
-      const ry = h / 2;
-      const pts = [
-        [cx, cy - ry],
-        [cx + rx * 0.92, cy - ry * 0.5],
-        [cx + rx * 0.92, cy + ry * 0.5],
-        [cx, cy + ry],
-        [cx - rx * 0.92, cy + ry * 0.5],
-        [cx - rx * 0.92, cy - ry * 0.5],
-      ];
-      return `M ${pts.map((p) => p.join(',')).join(' L ')} Z`;
-    }
-    case 'pill': {
-      const r = Math.min(w, h) / 2;
-      return [
-        `M ${x + r} ${y}`,
-        `L ${x + w - r} ${y}`,
-        `A ${r} ${r} 0 0 1 ${x + w} ${y + r}`,
-        `L ${x + w} ${y + h - r}`,
-        `A ${r} ${r} 0 0 1 ${x + w - r} ${y + h}`,
-        `L ${x + r} ${y + h}`,
-        `A ${r} ${r} 0 0 1 ${x} ${y + h - r}`,
-        `L ${x} ${y + r}`,
-        `A ${r} ${r} 0 0 1 ${x + r} ${y}`,
-        'Z',
-      ].join(' ');
-    }
-    case 'rounded':
-    default: {
-      const r = Math.min(radius, w / 4, h / 4);
-      return [
-        `M ${x + r} ${y}`,
-        `L ${x + w - r} ${y}`,
-        `Q ${x + w} ${y} ${x + w} ${y + r}`,
-        `L ${x + w} ${y + h - r}`,
-        `Q ${x + w} ${y + h} ${x + w - r} ${y + h}`,
-        `L ${x + r} ${y + h}`,
-        `Q ${x} ${y + h} ${x} ${y + h - r}`,
-        `L ${x} ${y + r}`,
-        `Q ${x} ${y} ${x + r} ${y}`,
-        'Z',
-      ].join(' ');
-    }
-  }
+function GdgBracketLogo({
+  x,
+  y,
+  scale = 1,
+  strokeColor = '#1e1e1e',
+  strokeWidth = 2.4,
+  withLabel = false,
+  labelColor = '#1e1e1e',
+  chapterText = 'Google Developer Groups',
+}: {
+  x: number;
+  y: number;
+  scale?: number;
+  strokeColor?: string;
+  strokeWidth?: number;
+  withLabel?: boolean;
+  labelColor?: string;
+  chapterText?: string;
+}) {
+  const sw = strokeWidth / scale;
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+      {/* Left bracket < : Red upper arm + Blue lower arm */}
+      <g transform="translate(22, 20)">
+        <rect
+          x="-18"
+          y="-7"
+          width="36"
+          height="14"
+          rx="7"
+          transform="translate(-4, -7) rotate(-32)"
+          fill="#ea4335"
+          stroke={strokeColor}
+          strokeWidth={sw}
+        />
+        <rect
+          x="-18"
+          y="-7"
+          width="36"
+          height="14"
+          rx="7"
+          transform="translate(-4, 7) rotate(32)"
+          fill="#4285f4"
+          stroke={strokeColor}
+          strokeWidth={sw}
+        />
+        <circle cx="-13" cy="0" r="6.4" fill="#ea4335" />
+      </g>
+      {/* Right bracket > : Green upper arm + Yellow lower arm */}
+      <g transform="translate(64, 20)">
+        <rect
+          x="-18"
+          y="-7"
+          width="36"
+          height="14"
+          rx="7"
+          transform="translate(4, 7) rotate(-32)"
+          fill="#f9ab00"
+          stroke={strokeColor}
+          strokeWidth={sw}
+        />
+        <rect
+          x="-18"
+          y="-7"
+          width="36"
+          height="14"
+          rx="7"
+          transform="translate(4, -7) rotate(32)"
+          fill="#34a853"
+          stroke={strokeColor}
+          strokeWidth={sw}
+        />
+      </g>
+      {withLabel && (
+        <text
+          x={96}
+          y={25}
+          fill={labelColor}
+          fontFamily="'Google Sans', 'Pretendard', sans-serif"
+          fontSize={16}
+          fontWeight={700}
+          letterSpacing="-0.02em"
+        >
+          {chapterText}
+        </text>
+      )}
+    </g>
+  );
 }
 
-export const CanvasSvgRenderer: React.FC<CanvasSvgRendererProps> = ({
-  svgRef,
-  preset,
-  layout,
-  designSystem,
-  speaker,
-  allSpeakers,
-  eventInfo,
-  baseAssets,
-  showPrintGuides,
-  transparentBg,
-}) => {
-  const { width: W, height: H } = preset;
-  const { colors, typography, shapes } = designSystem;
-  const activeAccent = speaker.accentColorOverride || colors.primary;
-
-  const backgroundAssets = baseAssets.filter((a) => a.visible && a.type === 'background');
-  const frameAssets = baseAssets.filter((a) => a.visible && a.type === 'frame');
-  const foregroundAssets = baseAssets.filter(
-    (a) => a.visible && a.type !== 'background' && a.type !== 'frame'
+/**
+ * Official DevFest 2026 Bold `//` Double Slash Sticker
+ */
+function DoubleSlashGlyph({
+  x,
+  y,
+  height,
+  fill,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.5,
+}: {
+  x: number;
+  y: number;
+  height: number;
+  fill: string;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  const s = height / 100;
+  const barW = 28 * s;
+  const barH = 104 * s;
+  const rx = 10 * s;
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)})`}>
+      <rect
+        x={18 * s}
+        y={0}
+        width={barW}
+        height={barH}
+        rx={rx}
+        transform={`skewX(-18)`}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+      />
+      <rect
+        x={58 * s}
+        y={0}
+        width={barW}
+        height={barH}
+        rx={rx}
+        transform={`skewX(-18)`}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+      />
+    </g>
   );
+}
+
+/**
+ * Official DevFest 2026 Bold `;` Semicolon Sticker
+ */
+function SemicolonGlyph({
+  x,
+  y,
+  height,
+  fill,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.5,
+}: {
+  x: number;
+  y: number;
+  height: number;
+  fill: string;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  const s = height / 100;
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${s.toFixed(3)})`}>
+      <circle
+        cx={28}
+        cy={20}
+        r={17}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth / s}
+      />
+      <path
+        d="M 16 54 H 40 A 8 8 0 0 1 48 62 V 76 C 48 92 34 102 14 104 L 11 91 C 22 89 27 84 27 76 H 16 A 8 8 0 0 1 8 68 V 62 A 8 8 0 0 1 16 54 Z"
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth / s}
+        strokeLinejoin="round"
+      />
+    </g>
+  );
+}
+
+/**
+ * Official DevFest 2026 3-Circle Caterpillar Blob (Unified outline with inner circle detail)
+ */
+function CaterpillarBlob({
+  x,
+  y,
+  width,
+  fill,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.5,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  fill: string;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  const s = width / 180;
+  const sw = strokeWidth / s;
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${s.toFixed(3)})`}>
+      {/* Unified 3-lobe caterpillar silhouette */}
+      <path
+        d="M 52 14 A 30 30 0 0 1 90 14 A 30 30 0 0 1 128 14 A 30 30 0 1 1 128 58 A 30 30 0 0 1 90 58 A 30 30 0 0 1 52 58 A 30 30 0 1 1 52 14 Z"
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />
+      {/* Signature single complete circle ring on the right lobe (from DevFest 2026 slides) */}
+      <circle
+        cx={142}
+        cy={36}
+        r={30}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={sw}
+      />
+    </g>
+  );
+}
+
+/**
+ * Official DevFest 2026 Scallop Arches Sticker (2 connected half-domes)
+ */
+function ScallopArches({
+  x,
+  y,
+  width,
+  fill,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.5,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  fill: string;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  const s = width / 160;
+  const sw = strokeWidth / s;
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${s.toFixed(3)})`}>
+      <path
+        d="M 4 44 A 38 38 0 0 1 80 44 A 38 38 0 0 1 156 44 Z"
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />
+    </g>
+  );
+}
+
+/**
+ * Monoline 8-spoke asterisk `*` from DevFest 2026 Sticker Sheet
+ */
+function MonolineAsterisk({
+  cx,
+  cy,
+  radius,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.4,
+}: {
+  cx: number;
+  cy: number;
+  radius: number;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  const d45 = radius * 0.7071;
+  return (
+    <g stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round">
+      <line x1={cx - radius} y1={cy} x2={cx + radius} y2={cy} />
+      <line x1={cx} y1={cy - radius} x2={cx} y2={cy + radius} />
+      <line x1={cx - d45} y1={cy - d45} x2={cx + d45} y2={cy + d45} />
+      <line x1={cx - d45} y1={cy + d45} x2={cx + d45} y2={cy - d45} />
+    </g>
+  );
+}
+
+/**
+ * Monoline Wireframe Globe from DevFest 2026 Speaker / Meterboard templates
+ */
+function WireframeGlobe({
+  cx,
+  cy,
+  radius,
+  stroke = '#1e1e1e',
+  strokeWidth = 2.2,
+}: {
+  cx: number;
+  cy: number;
+  radius: number;
+  stroke?: string;
+  strokeWidth?: number;
+}) {
+  return (
+    <g fill="none" stroke={stroke} strokeWidth={strokeWidth}>
+      <circle cx={cx} cy={cy} r={radius} />
+      <ellipse cx={cx} cy={cy} rx={radius * 0.52} ry={radius} />
+      <ellipse cx={cx} cy={cy} rx={radius} ry={radius * 0.42} />
+      <line x1={cx - radius} y1={cy} x2={cx + radius} y2={cy} />
+      <line x1={cx} y1={cy - radius} x2={cx} y2={cy + radius} />
+    </g>
+  );
+}
+
+/**
+ * Official `{ DevFest } [Location] [2026]` Lockup Header
+ */
+function DevFestBracketLockup({
+  x,
+  y,
+  scale,
+  eventMeta,
+  colorway,
+  strokeWidth,
+  compact = false,
+}: {
+  x: number;
+  y: number;
+  scale: number;
+  eventMeta: DevFestEventMeta;
+  colorway: DevFestColorway;
+  strokeWidth: number;
+  compact?: boolean;
+}) {
+  const sw = strokeWidth / scale;
+  const titleText = eventMeta.eventTitle || 'DevFest';
+  const locText = eventMeta.locationText || 'Seoul';
+  const yearText = eventMeta.yearText || '2026';
+
+  const locPillW = Math.max(96, locText.length * 14 + 34);
+  const yearPillW = Math.max(88, yearText.length * 18 + 34);
+
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+      {/* Left Curly Brace { */}
+      <text
+        x={0}
+        y={52}
+        fill={colorway.bracketColor}
+        fontFamily="'Google Sans', 'Pretendard', sans-serif"
+        fontSize={62}
+        fontWeight={700}
+      >
+        {'{'}
+      </text>
+
+      {/* DevFest wordmark */}
+      <text
+        x={34}
+        y={50}
+        fill={colorway.ink}
+        fontFamily="'Google Sans', 'Pretendard', sans-serif"
+        fontSize={54}
+        fontWeight={800}
+        letterSpacing="-0.03em"
+      >
+        {titleText}
+      </text>
+
+      {/* Right Curly Brace } */}
+      <text
+        x={252}
+        y={52}
+        fill={colorway.bracketColor}
+        fontFamily="'Google Sans', 'Pretendard', sans-serif"
+        fontSize={62}
+        fontWeight={700}
+      >
+        {'}'}
+      </text>
+
+      {!compact ? (
+        <>
+          {/* Location Pill (top-right of DevFest or beside it) */}
+          <rect
+            x={288}
+            y={12}
+            width={locPillW}
+            height={36}
+            rx={8}
+            fill={colorway.locationPillBg}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+          <text
+            x={288 + locPillW / 2}
+            y={35}
+            textAnchor="middle"
+            fill={colorway.locationPillText}
+            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+            fontSize={17}
+            fontWeight={600}
+          >
+            {locText}
+          </text>
+
+          {/* 2026 Capsule Pill below */}
+          <rect
+            x={168}
+            y={66}
+            width={yearPillW}
+            height={42}
+            rx={21}
+            fill={colorway.yearPillBg}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+          <text
+            x={168 + yearPillW / 2}
+            y={94}
+            textAnchor="middle"
+            fill={colorway.yearPillText}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={25}
+            fontWeight={800}
+          >
+            {yearText}
+          </text>
+        </>
+      ) : (
+        <>
+          {/* Inline Location + Year pills */}
+          <rect
+            x={288}
+            y={14}
+            width={locPillW}
+            height={40}
+            rx={8}
+            fill={colorway.locationPillBg}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+          <text
+            x={288 + locPillW / 2}
+            y={40}
+            textAnchor="middle"
+            fill={colorway.locationPillText}
+            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+            fontSize={18}
+            fontWeight={600}
+          >
+            {locText}
+          </text>
+          <rect
+            x={288 + locPillW + 12}
+            y={14}
+            width={yearPillW}
+            height={40}
+            rx={20}
+            fill={colorway.yearPillBg}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+          <text
+            x={288 + locPillW + 12 + yearPillW / 2}
+            y={41}
+            textAnchor="middle"
+            fill={colorway.yearPillText}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={22}
+            fontWeight={800}
+          >
+            {yearText}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
+
+/**
+ * Official `Track @DevFest` Two-Line Header Lockup with Location Pill
+ */
+function TrackAtDevFestLockup({
+  x,
+  y,
+  scale,
+  trackLabel,
+  locationText,
+  yearText,
+  colorway,
+  strokeWidth,
+  textColorOverride,
+}: {
+  x: number;
+  y: number;
+  scale: number;
+  trackLabel: string;
+  locationText: string;
+  yearText?: string;
+  colorway: DevFestColorway;
+  strokeWidth: number;
+  textColorOverride?: string;
+}) {
+  const sw = strokeWidth / scale;
+  const headingColor = textColorOverride || colorway.ink;
+  const locW = Math.max(108, locationText.length * 14 + 36);
+  const yearW = yearText ? Math.max(76, yearText.length * 15 + 26) : 0;
+
+  return (
+    <g transform={`translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(3)})`}>
+      <text
+        x={0}
+        y={42}
+        fill={headingColor}
+        fontFamily="'Google Sans', 'Pretendard', sans-serif"
+        fontSize={46}
+        fontWeight={800}
+        letterSpacing="-0.03em"
+      >
+        {trackLabel || 'AI & Cloud'}
+      </text>
+      <text
+        x={0}
+        y={94}
+        fill={headingColor}
+        fontFamily="'Google Sans', 'Pretendard', sans-serif"
+        fontSize={46}
+        fontWeight={800}
+        letterSpacing="-0.03em"
+      >
+        @DevFest
+      </text>
+
+      {/* Location Pill aligned beside @DevFest */}
+      <rect
+        x={236}
+        y={58}
+        width={locW}
+        height={38}
+        rx={9}
+        fill={colorway.locationPillBg}
+        stroke={colorway.ink}
+        strokeWidth={sw}
+      />
+      <text
+        x={236 + locW / 2}
+        y={83}
+        textAnchor="middle"
+        fill={colorway.locationPillText}
+        fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+        fontSize={17}
+        fontWeight={600}
+      >
+        {locationText}
+      </text>
+
+      {yearText && (
+        <>
+          <rect
+            x={236 + locW + 10}
+            y={58}
+            width={yearW}
+            height={38}
+            rx={19}
+            fill={colorway.yearPillBg}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+          <text
+            x={236 + locW + 10 + yearW / 2}
+            y={84}
+            textAnchor="middle"
+            fill={colorway.yearPillText}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={20}
+            fontWeight={800}
+          >
+            {yearText}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
+
+export default function CanvasSvgRenderer({
+  svgRef,
+  width,
+  height,
+  mode,
+  speakerVariant,
+  timetableVariant,
+  colorway,
+  activeSpeaker,
+  sessions,
+  eventMeta,
+}: CanvasSvgRendererProps) {
+  const W = Math.max(320, width);
+  const H = Math.max(320, height);
+  const minDim = Math.min(W, H);
+  const u = minDim / 1000;
+  const aspect = W / H;
+  const sw = Math.max(2, Number((2.5 * u).toFixed(2)));
+  const cornerR = Math.round(26 * u);
+
+  // Dark canvas check (for text sitting directly on the outer canvas)
+  const isDarkCanvas = colorway.id === 'dark-charcoal';
+  const canvasTextColor = isDarkCanvas ? '#ffffff' : colorway.ink;
+  const canvasMutedColor = isDarkCanvas ? '#d0d0d0' : colorway.mutedInk;
 
   const filterAttr =
-    speaker.photoFilter !== 'none' ? `url(#filter-${speaker.photoFilter})` : undefined;
+    activeSpeaker.photoFilter === 'grayscale'
+      ? 'url(#df-filter-grayscale)'
+      : activeSpeaker.photoFilter === 'contrast'
+      ? 'url(#df-filter-contrast)'
+      : undefined;
 
-  // Helper to render merged speaker portrait at (cx, cy) with (frameW, frameH)
-  const renderSpeakerPortrait = (
-    cx: number,
-    cy: number,
-    frameW: number,
-    frameH: number,
-    clipId: string
+  // Render helper for speaker photo inside any bounding box [fx, fy, fw, fh]
+  const renderClippedPhoto = (
+    clipId: string,
+    pathD: string,
+    fx: number,
+    fy: number,
+    fw: number,
+    fh: number,
+    speaker: SpeakerSessionItem
   ) => {
-    const framePath = getSpeakerFramePath(
-      shapes.speakerFrameShape,
-      cx,
-      cy,
-      frameW,
-      frameH,
-      shapes.borderRadius
-    );
-    const shadowOffset = shapes.shadowStyle === 'brutalist' ? Math.max(10, frameW * 0.03) : 0;
-    const shadowPath =
-      shadowOffset > 0
-        ? getSpeakerFramePath(
-            shapes.speakerFrameShape,
-            cx + shadowOffset,
-            cy + shadowOffset,
-            frameW,
-            frameH,
-            shapes.borderRadius
-          )
-        : '';
-
-    const imgW = frameW * speaker.photoScale;
-    const imgH = frameH * speaker.photoScale;
-    const imgX = cx - imgW / 2 + (speaker.photoOffsetX / 100) * frameW;
-    const imgY = cy - imgH / 2 + (speaker.photoOffsetY / 100) * frameH;
+    const scale = speaker.photoScale || 1;
+    const imgW = fw * scale;
+    const imgH = fh * scale;
+    const imgX = fx + (fw - imgW) / 2 + (speaker.photoOffsetX || 0) * (fw / 200);
+    const imgY = fy + (fh - imgH) / 2 + (speaker.photoOffsetY || 0) * (fh / 200);
 
     return (
-      <g>
+      <>
         <defs>
           <clipPath id={clipId}>
-            <path d={framePath} />
+            <path d={pathD} />
           </clipPath>
         </defs>
-
-        {/* Optional AI Aura / Studio Glow behind speaker */}
-        {(speaker.aiAuraEnabled || shapes.shadowStyle === 'glow') && (
-          <g opacity="0.75">
-            <circle
-              cx={cx - frameW * 0.18}
-              cy={cy - frameH * 0.15}
-              r={frameW * 0.45}
-              fill="url(#aiAuraGrad)"
-              filter="url(#blurGlow)"
-            />
-            <circle
-              cx={cx + frameW * 0.2}
-              cy={cy + frameH * 0.18}
-              r={frameW * 0.4}
-              fill={colors.accent}
-              opacity="0.3"
-              filter="url(#blurGlow)"
-            />
-          </g>
-        )}
-
-        {/* Brutalist Offset Shadow */}
-        {shadowOffset > 0 && <path d={shadowPath} fill={colors.border} />}
-
-        {/* Frame Base Fill */}
-        <path d={framePath} fill={colors.surface} />
-
-        {/* Clipped Speaker Photo + Merged Frame Overlay */}
         <g clipPath={`url(#${clipId})`}>
-          {/* Subtle inner studio backdrop */}
-          <rect
-            x={cx - frameW / 2}
-            y={cy - frameH / 2}
-            width={frameW}
-            height={frameH}
-            fill="url(#speakerBackdropGrad)"
-          />
+          <rect x={fx} y={fy} width={fw} height={fh} fill="#d8e2ef" />
           {speaker.photoDataUrl && (
             <image
               href={speaker.photoDataUrl}
@@ -265,1438 +784,1017 @@ export const CanvasSvgRenderer: React.FC<CanvasSvgRendererProps> = ({
               filter={filterAttr}
             />
           )}
-          {/* Inner bottom gradient for depth */}
+        </g>
+        <path
+          d={pathD}
+          fill="none"
+          stroke={isDarkCanvas ? '#ffffff' : colorway.ink}
+          strokeWidth={sw}
+          strokeLinejoin="round"
+        />
+      </>
+    );
+  };
+
+  // ============================================================================
+  // MODE 1: SPEAKER PROMO CARD / SPEAKER X-BANNER
+  // ============================================================================
+  const renderSpeakerAsset = () => {
+    const pad = Math.round(48 * u);
+
+    // -------------------------------------------------------------------------
+    // VARIANT 1C: X-BANNER / STANDING METERBOARD (meterboard_0.png, meterboard_1.png)
+    // Also auto-selected if user picks xbanner-meterboard
+    // -------------------------------------------------------------------------
+    if (speakerVariant === 'xbanner-meterboard') {
+      const headerH = Math.round(H * 0.14);
+      const footerH = Math.round(H * 0.31);
+      const photoX = pad;
+      const photoY = pad + headerH;
+      const photoW = W - pad * 2;
+      const photoH = Math.max(180, H - pad * 2 - headerH - footerH);
+
+      // Top-right notch for asterisk + bottom-left notch for slash/globe
+      const notchTRW = Math.round(photoW * 0.22);
+      const notchTRH = Math.round(photoH * 0.14);
+      const notchBLW = Math.round(photoW * 0.24);
+      const notchBLH = Math.round(photoH * 0.13);
+
+      const photoPts: Array<[number, number]> = [
+        [photoX, photoY],
+        [photoX + photoW - notchTRW, photoY],
+        [photoX + photoW - notchTRW, photoY + notchTRH],
+        [photoX + photoW, photoY + notchTRH],
+        [photoX + photoW, photoY + photoH],
+        [photoX + notchBLW, photoY + photoH],
+        [photoX + notchBLW, photoY + photoH - notchBLH],
+        [photoX, photoY + photoH - notchBLH],
+      ];
+      const photoPath = buildOrthogonalRoundedPath(photoPts, cornerR);
+
+      const cardY = photoY + photoH + Math.round(24 * u);
+      const cardH = H - pad - cardY;
+
+      const titleLines = wrapTextLines(activeSpeaker.title, 24, 3);
+      const descLines = wrapTextLines(activeSpeaker.description, 34, 2);
+
+      return (
+        <g>
+          {/* Top Header: Track @DevFest + Location Pill + Double Slash */}
+          <TrackAtDevFestLockup
+            x={pad}
+            y={pad}
+            scale={u * 1.15}
+            trackLabel={activeSpeaker.track || 'AI & Cloud'}
+            locationText={eventMeta.locationText}
+            yearText={eventMeta.yearText}
+            colorway={colorway}
+            strokeWidth={sw}
+            textColorOverride={canvasTextColor}
+          />
+
+          <DoubleSlashGlyph
+            x={W - pad - 120 * u}
+            y={pad + 8 * u}
+            height={92 * u}
+            fill={colorway.slashFill}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+
+          {/* Wireframe Globe behind bottom-right of photo */}
+          {eventMeta.showWireframeGlobe && (
+            <WireframeGlobe
+              cx={photoX + photoW - 35 * u}
+              cy={photoY + photoH - 25 * u}
+              radius={85 * u}
+              stroke={canvasTextColor}
+              strokeWidth={sw * 0.85}
+            />
+          )}
+
+          {/* Stepped Speaker Photo */}
+          {renderClippedPhoto(
+            'clip-meterboard-photo',
+            photoPath,
+            photoX,
+            photoY,
+            photoW,
+            photoH,
+            activeSpeaker
+          )}
+
+          {/* Top-right notch Asterisk */}
+          {eventMeta.showAsteriskSticker && (
+            <MonolineAsterisk
+              cx={photoX + photoW - notchTRW * 0.45}
+              cy={photoY + notchTRH * 0.48}
+              radius={Math.min(notchTRW, notchTRH) * 0.34}
+              stroke={canvasTextColor}
+              strokeWidth={sw}
+            />
+          )}
+
+          {/* Bottom-left notch Caterpillar or Semicolon */}
+          <CaterpillarBlob
+            x={photoX}
+            y={photoY + photoH - notchBLH + 14 * u}
+            width={notchBLW * 0.88}
+            fill={colorway.caterpillarFill}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+
+          {/* Bottom White Speaker Card */}
           <rect
-            x={cx - frameW / 2}
-            y={cy + frameH * 0.15}
-            width={frameW}
-            height={frameH * 0.35}
-            fill="url(#bottomVignette)"
+            x={pad}
+            y={cardY}
+            width={photoW}
+            height={cardH}
+            rx={cornerR}
+            fill={colorway.cardSurface}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+
+          {/* Speaker Name + Affiliation + Track Pill */}
+          <g transform={`translate(${pad + 36 * u}, ${cardY + 48 * u})`}>
+            {/* Time & Room Badge */}
+            <rect
+              x={0}
+              y={0}
+              width={Math.min(photoW - 72 * u, 420 * u)}
+              height={38 * u}
+              rx={8 * u}
+              fill={colorway.yearPillBg}
+              stroke={colorway.ink}
+              strokeWidth={sw * 0.85}
+            />
+            <text
+              x={16 * u}
+              y={25 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={18 * u}
+              fontWeight={700}
+            >
+              {`${activeSpeaker.time} · ${activeSpeaker.room}`}
+            </text>
+
+            {/* Speaker Name */}
+            <text
+              x={0}
+              y={94 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans', 'Pretendard', sans-serif"
+              fontSize={48 * u}
+              fontWeight={800}
+              letterSpacing="-0.03em"
+            >
+              {activeSpeaker.name}
+            </text>
+
+            {/* Speaker Affiliation & Role */}
+            <text
+              x={0}
+              y={130 * u}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={21 * u}
+              fontWeight={600}
+            >
+              {[activeSpeaker.affiliation, activeSpeaker.role]
+                .filter(Boolean)
+                .join(' · ')}
+            </text>
+
+            {/* Divider line */}
+            <line
+              x1={0}
+              y1={154 * u}
+              x2={photoW - 72 * u}
+              y2={154 * u}
+              stroke={colorway.ink}
+              strokeWidth={sw * 0.7}
+              strokeDasharray={`${6 * u} ${6 * u}`}
+            />
+
+            {/* Session Title */}
+            {titleLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={(198 + idx * 40) * u}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={31 * u}
+                fontWeight={800}
+                letterSpacing="-0.02em"
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Session Description */}
+            {cardH > 340 * u &&
+              descLines.map((line, idx) => (
+                <text
+                  key={idx}
+                  x={0}
+                  y={(198 + titleLines.length * 40 + 18 + idx * 28) * u}
+                  fill={colorway.mutedInk}
+                  fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                  fontSize={20 * u}
+                  fontWeight={500}
+                >
+                  {line}
+                </text>
+              ))}
+          </g>
+
+          {/* Bottom GDG Bracket Logo inside card bottom-right */}
+          <GdgBracketLogo
+            x={W - pad - 115 * u}
+            y={H - pad - 54 * u}
+            scale={u * 1.0}
+            strokeColor={colorway.ink}
+            strokeWidth={sw}
           />
         </g>
+      );
+    }
 
-        {/* Frame Stroke */}
-        {shapes.borderWidth > 0 && (
-          <path
-            d={framePath}
-            fill="none"
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth * 1.5}
+    // -------------------------------------------------------------------------
+    // LANDSCAPE SPEAKER PROMO (aspect >= 1.22, e.g., 1920x1080 or 1200x800)
+    // Matches speaker_16x9_0.png and speaker_promo_16x9_0.png
+    // -------------------------------------------------------------------------
+    if (aspect >= 1.22) {
+      const leftW = Math.round((W - pad * 2) * 0.48);
+      const photoX = pad + leftW + Math.round(24 * u);
+      const photoY = pad;
+      const photoW = W - pad - photoX;
+      const photoH = H - pad * 2;
+
+      const stepTLW = Math.round(photoW * 0.25);
+      const stepTLH = Math.round(photoH * 0.2);
+      const notchBRW = Math.round(photoW * 0.22);
+      const notchBRH = Math.round(photoH * 0.16);
+
+      const photoPts: Array<[number, number]> = [
+        [photoX + stepTLW, photoY],
+        [photoX + photoW, photoY],
+        [photoX + photoW, photoY + photoH - notchBRH],
+        [photoX + photoW - notchBRW, photoY + photoH - notchBRH],
+        [photoX + photoW - notchBRW, photoY + photoH],
+        [photoX, photoY + photoH],
+        [photoX, photoY + stepTLH],
+        [photoX + stepTLW, photoY + stepTLH],
+      ];
+      const photoPath = buildOrthogonalRoundedPath(photoPts, cornerR);
+
+      const titleLines = wrapTextLines(activeSpeaker.title, 22, 3);
+      const descLines = wrapTextLines(activeSpeaker.description, 30, 2);
+
+      return (
+        <g>
+          {/* Left Header Lockup */}
+          {speakerVariant === 'devfest-bracket' ? (
+            <DevFestBracketLockup
+              x={pad}
+              y={pad + 8 * u}
+              scale={u * 1.05}
+              eventMeta={eventMeta}
+              colorway={colorway}
+              strokeWidth={sw}
+            />
+          ) : (
+            <TrackAtDevFestLockup
+              x={pad}
+              y={pad + 8 * u}
+              scale={u * 1.08}
+              trackLabel={activeSpeaker.track}
+              locationText={eventMeta.locationText}
+              yearText={eventMeta.yearText}
+              colorway={colorway}
+              strokeWidth={sw}
+              textColorOverride={canvasTextColor}
+            />
+          )}
+
+          {/* Decorative Asterisk or Semicolon in the top-left photo cutout */}
+          {speakerVariant === 'devfest-bracket' ? (
+            eventMeta.showAsteriskSticker && (
+              <MonolineAsterisk
+                cx={photoX + stepTLW * 0.45}
+                cy={photoY + stepTLH * 0.48}
+                radius={Math.min(stepTLW, stepTLH) * 0.34}
+                stroke={canvasTextColor}
+                strokeWidth={sw}
+              />
+            )
+          ) : (
+            <SemicolonGlyph
+              x={photoX + stepTLW * 0.22}
+              y={photoY + stepTLH * 0.08}
+              height={stepTLH * 0.78}
+              fill={colorway.slashFill}
+              stroke={colorway.ink}
+              strokeWidth={sw}
+            />
+          )}
+
+          {/* Left Speaker & Session Editorial Card */}
+          <rect
+            x={pad}
+            y={pad + 170 * u}
+            width={leftW}
+            height={H - pad * 2 - 170 * u}
+            rx={cornerR}
+            fill={colorway.cardSurface}
+            stroke={colorway.ink}
+            strokeWidth={sw}
+          />
+
+          <g transform={`translate(${pad + 36 * u}, ${pad + 216 * u})`}>
+            {/* Track + Time Badge */}
+            <rect
+              x={0}
+              y={0}
+              width={Math.min(leftW - 72 * u, 380 * u)}
+              height={36 * u}
+              rx={8 * u}
+              fill={colorway.yearPillBg}
+              stroke={colorway.ink}
+              strokeWidth={sw * 0.85}
+            />
+            <text
+              x={14 * u}
+              y={24 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={16 * u}
+              fontWeight={700}
+            >
+              {`${activeSpeaker.track} · ${activeSpeaker.time}`}
+            </text>
+
+            {/* Speaker Name */}
+            <text
+              x={0}
+              y={92 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans', 'Pretendard', sans-serif"
+              fontSize={48 * u}
+              fontWeight={800}
+              letterSpacing="-0.03em"
+            >
+              {activeSpeaker.name}
+            </text>
+
+            {/* Affiliation & Role */}
+            <text
+              x={0}
+              y={128 * u}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={20 * u}
+              fontWeight={600}
+            >
+              {[activeSpeaker.affiliation, activeSpeaker.role]
+                .filter(Boolean)
+                .join(' · ')}
+            </text>
+
+            {/* Talk Title */}
+            {titleLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={(186 + idx * 38) * u}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={29 * u}
+                fontWeight={800}
+                letterSpacing="-0.02em"
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Talk Description */}
+            {descLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={(186 + titleLines.length * 38 + 16 + idx * 26) * u}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={18 * u}
+                fontWeight={500}
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Venue Room Footer */}
+            <text
+              x={0}
+              y={H - pad * 2 - 245 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={17 * u}
+              fontWeight={700}
+            >
+              {`📍 ${activeSpeaker.room}   |   ${eventMeta.dateVenueSubtext}`}
+            </text>
+          </g>
+
+          {/* Wireframe Globe behind bottom-left of photo */}
+          {eventMeta.showWireframeGlobe && (
+            <WireframeGlobe
+              cx={photoX + 20 * u}
+              cy={photoY + photoH - 40 * u}
+              radius={72 * u}
+              stroke={canvasTextColor}
+              strokeWidth={sw * 0.85}
+            />
+          )}
+
+          {/* Stepped Photo Frame on Right */}
+          {renderClippedPhoto(
+            'clip-landscape-photo',
+            photoPath,
+            photoX,
+            photoY,
+            photoW,
+            photoH,
+            activeSpeaker
+          )}
+
+          {/* GDG `< >` Logo in the bottom-right notch */}
+          <GdgBracketLogo
+            x={photoX + photoW - notchBRW + 18 * u}
+            y={photoY + photoH - notchBRH + (notchBRH - 40 * u) / 2}
+            scale={u * 1.05}
+            strokeColor={colorway.ink}
+            strokeWidth={sw}
+          />
+        </g>
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // SQUARE / PORTRAIT (800x1000, 1080x1080, 1080x1350, 1080x1920)
+    // Matches speaker_sq_0.png & speaker_3x4_9x16_0.png & speaker_3x4_9x16_1.png
+    // -------------------------------------------------------------------------
+    const topHeaderH = Math.round(145 * u);
+    const infoCardH = Math.round(Math.max(255 * u, H * 0.27));
+    const photoX = pad;
+    const photoY = pad + topHeaderH - Math.round(28 * u);
+    const photoW = W - pad * 2;
+    const photoH = Math.max(240, H - pad - infoCardH - Math.round(20 * u) - photoY);
+
+    // Top-left step cutout (so the 2026 pill / Location pill sits neatly above-left of the photo step)
+    const stepTLW = Math.round(photoW * 0.34);
+    const stepTLH = Math.round(Math.min(photoH * 0.22, 96 * u));
+    // Bottom-right notch cutout for GDG `< >` logo
+    const notchBRW = Math.round(Math.max(130 * u, photoW * 0.22));
+    const notchBRH = Math.round(Math.min(photoH * 0.2, 82 * u));
+
+    const photoPts: Array<[number, number]> = [
+      [photoX + stepTLW, photoY],
+      [photoX + photoW, photoY],
+      [photoX + photoW, photoY + photoH - notchBRH],
+      [photoX + photoW - notchBRW, photoY + photoH - notchBRH],
+      [photoX + photoW - notchBRW, photoY + photoH],
+      [photoX, photoY + photoH],
+      [photoX, photoY + stepTLH],
+      [photoX + stepTLW, photoY + stepTLH],
+    ];
+    const photoPath = buildOrthogonalRoundedPath(photoPts, cornerR);
+
+    const cardY = photoY + photoH + Math.round(20 * u);
+    const titleLines = wrapTextLines(activeSpeaker.title, 28, 2);
+    const descLines = wrapTextLines(activeSpeaker.description, 38, 2);
+
+    return (
+      <g>
+        {/* Top Header Lockup */}
+        {speakerVariant === 'devfest-bracket' ? (
+          <DevFestBracketLockup
+            x={pad}
+            y={pad}
+            scale={u * 1.05}
+            eventMeta={eventMeta}
+            colorway={colorway}
+            strokeWidth={sw}
+          />
+        ) : (
+          <>
+            <TrackAtDevFestLockup
+              x={pad}
+              y={pad - 4 * u}
+              scale={u * 1.0}
+              trackLabel={activeSpeaker.track}
+              locationText={eventMeta.locationText}
+              yearText={eventMeta.yearText}
+              colorway={colorway}
+              strokeWidth={sw}
+              textColorOverride={canvasTextColor}
+            />
+            <DoubleSlashGlyph
+              x={W - pad - 110 * u}
+              y={pad}
+              height={82 * u}
+              fill={colorway.slashFill}
+              stroke={colorway.ink}
+              strokeWidth={sw}
+            />
+          </>
+        )}
+
+        {/* Top-Right Asterisk or Semicolon when using devfest-bracket */}
+        {speakerVariant === 'devfest-bracket' && eventMeta.showAsteriskSticker && (
+          <MonolineAsterisk
+            cx={W - pad - 48 * u}
+            cy={pad + 42 * u}
+            radius={34 * u}
+            stroke={canvasTextColor}
+            strokeWidth={sw}
           />
         )}
 
-        {/* GDG 4-Color Corner Spark Accents */}
-        <circle
-          cx={cx - frameW * 0.44}
-          cy={cy - frameH * 0.42}
-          r={Math.max(12, frameW * 0.04)}
-          fill={colors.accent}
-          stroke={colors.border}
-          strokeWidth={Math.max(2, shapes.borderWidth)}
+        {/* Wireframe Globe peeking at bottom-left of photo */}
+        {eventMeta.showWireframeGlobe && (
+          <WireframeGlobe
+            cx={photoX + 46 * u}
+            cy={photoY + photoH - 22 * u}
+            radius={64 * u}
+            stroke={canvasTextColor}
+            strokeWidth={sw * 0.85}
+          />
+        )}
+
+        {/* Stepped Speaker Photo Frame */}
+        {renderClippedPhoto(
+          'clip-portrait-photo',
+          photoPath,
+          photoX,
+          photoY,
+          photoW,
+          photoH,
+          activeSpeaker
+        )}
+
+        {/* GDG `< >` Logo in the bottom-right photo notch */}
+        <GdgBracketLogo
+          x={photoX + photoW - notchBRW + (notchBRW - 86 * u) / 2}
+          y={photoY + photoH - notchBRH + (notchBRH - 40 * u) / 2}
+          scale={u * 1.0}
+          strokeColor={colorway.ink}
+          strokeWidth={sw}
         />
+
+        {/* Bottom Speaker & Session Info White Card */}
         <rect
-          x={cx + frameW * 0.36}
-          y={cy + frameH * 0.34}
-          width={Math.max(26, frameW * 0.09)}
-          height={Math.max(26, frameW * 0.09)}
-          rx={8}
-          transform={`rotate(15 ${cx + frameW * 0.4} ${cy + frameH * 0.38})`}
-          fill={colors.success}
-          stroke={colors.border}
-          strokeWidth={Math.max(2, shapes.borderWidth)}
+          x={pad}
+          y={cardY}
+          width={photoW}
+          height={infoCardH}
+          rx={cornerR}
+          fill={colorway.cardSurface}
+          stroke={colorway.ink}
+          strokeWidth={sw}
         />
+
+        <g transform={`translate(${pad + 32 * u}, ${cardY + 38 * u})`}>
+          {/* Speaker Name */}
+          <text
+            x={0}
+            y={18 * u}
+            fill={colorway.ink}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={38 * u}
+            fontWeight={800}
+            letterSpacing="-0.03em"
+          >
+            {activeSpeaker.name}
+          </text>
+
+          {/* Track + Time Pill on the right of Speaker Name */}
+          <g transform={`translate(${photoW - 64 * u}, ${-12 * u})`}>
+            <rect
+              x={-260 * u}
+              y={0}
+              width={260 * u}
+              height={36 * u}
+              rx={8 * u}
+              fill={colorway.yearPillBg}
+              stroke={colorway.ink}
+              strokeWidth={sw * 0.85}
+            />
+            <text
+              x={-130 * u}
+              y={24 * u}
+              textAnchor="middle"
+              fill={colorway.ink}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={15.5 * u}
+              fontWeight={700}
+            >
+              {`${activeSpeaker.track} · ${activeSpeaker.time}`}
+            </text>
+          </g>
+
+          {/* Speaker Affiliation & Role */}
+          <text
+            x={0}
+            y={50 * u}
+            fill={colorway.mutedInk}
+            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+            fontSize={19 * u}
+            fontWeight={600}
+          >
+            {[activeSpeaker.affiliation, activeSpeaker.role, activeSpeaker.room]
+              .filter(Boolean)
+              .join(' · ')}
+          </text>
+
+          {/* Divider */}
+          <line
+            x1={0}
+            y1={72 * u}
+            x2={photoW - 64 * u}
+            y2={72 * u}
+            stroke={colorway.ink}
+            strokeWidth={sw * 0.65}
+            strokeDasharray={`${5 * u} ${5 * u}`}
+          />
+
+          {/* Session Title */}
+          {titleLines.map((line, idx) => (
+            <text
+              key={idx}
+              x={0}
+              y={(110 + idx * 34) * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans', 'Pretendard', sans-serif"
+              fontSize={26.5 * u}
+              fontWeight={800}
+              letterSpacing="-0.02em"
+            >
+              {line}
+            </text>
+          ))}
+
+          {/* Session Description */}
+          {infoCardH >= 245 * u &&
+            descLines.slice(0, 1).map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={(110 + titleLines.length * 34 + 6 + idx * 24) * u}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={17.5 * u}
+                fontWeight={500}
+              >
+                {line}
+              </text>
+            ))}
+        </g>
       </g>
     );
   };
 
-  // Render pattern background based on designSystem.shapes.patternStyle
-  const renderPatternOverlay = () => {
-    switch (shapes.patternStyle) {
-      case 'dots':
-        return <rect width={W} height={H} fill="url(#pattern-dots)" opacity="0.4" />;
-      case 'grid':
-        return <rect width={W} height={H} fill="url(#pattern-grid)" opacity="0.28" />;
-      case 'aurora':
-        return (
-          <g opacity="0.55">
-            <circle
-              cx={W * 0.82}
-              cy={H * 0.18}
-              r={Math.max(W, H) * 0.34}
-              fill={colors.primary}
-              filter="url(#blurGlowLarge)"
-            />
-            <circle
-              cx={W * 0.18}
-              cy={H * 0.82}
-              r={Math.max(W, H) * 0.3}
-              fill={colors.secondary}
-              filter="url(#blurGlowLarge)"
-            />
-          </g>
-        );
-      case 'geometric':
-        return (
-          <g opacity="0.85">
-            <circle
-              cx={W * 0.92}
-              cy={H * 0.12}
-              r={Math.min(W, H) * 0.14}
-              fill={colors.accent}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth}
-            />
-            <path
-              d={`M ${W * 0.05} ${H * 0.88} L ${W * 0.16} ${H * 0.96} L ${W * 0.03} ${H * 0.97} Z`}
-              fill={colors.primary}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth}
-            />
-          </g>
-        );
-      default:
-        return null;
-    }
-  };
+  // ============================================================================
+  // MODE 2: TIMETABLE / AGENDA (SNS Digital, X-Banner Standing, A4 Print)
+  // Matches agenda_digital_0.png, agenda_digital_1.png, agenda_digital_2.png,
+  // agenda_9x16_0.png, agenda_print_0.png, agenda_print_1.png
+  // ============================================================================
+  const renderTimetableAsset = () => {
+    const pad = Math.round(44 * u);
+    const cardX = pad;
+    const cardY = pad;
+    const cardW = W - pad * 2;
+    const cardH = H - pad * 2;
 
-  // Render layout content depending on `layout`
-  const renderLayoutContent = () => {
-    const padX = Math.round(W * 0.065);
-    const padY = Math.round(H * 0.065);
+    // -------------------------------------------------------------------------
+    // Stepped White Card Geometry (Official DevFest 2026 Agenda Container):
+    // - Top-left rises up as the "Agenda" folder tab (width tabW, height tabDropH)
+    // - Top-right steps down by tabDropH to leave canvas space for Track @DevFest + Location Pill + // or Scallop
+    // - Bottom-left steps in (cutBLW x cutBLH) to leave canvas space for GDG < > logo + Caterpillar blob
+    // -------------------------------------------------------------------------
+    const isWide = aspect >= 1.18;
+    const tabW = Math.round(cardW * (isWide ? 0.36 : 0.44));
+    const tabDropH = Math.round(Math.min(138 * u, cardH * 0.14));
+    const cutBLW = Math.round(Math.min(340 * u, cardW * (isWide ? 0.28 : 0.42)));
+    const cutBLH = Math.round(Math.min(92 * u, cardH * 0.1));
 
-    // ------------------------------------------------------------------------
-    // LAYOUT 1: X-BANNER STANDEE (1200 x 3600 or vertical tall standee)
-    // ------------------------------------------------------------------------
-    if (layout === 'x-banner') {
-      const cardX = padX;
-      const cardW = W - padX * 2;
-      const titleLines = wrapTextLines(speaker.topic, 19, 4);
+    const agendaCardPts: Array<[number, number]> = [
+      [cardX, cardY],
+      [cardX + tabW, cardY],
+      [cardX + tabW, cardY + tabDropH],
+      [cardX + cardW, cardY + tabDropH],
+      [cardX + cardW, cardY + cardH],
+      [cardX + cutBLW, cardY + cardH],
+      [cardX + cutBLW, cardY + cardH - cutBLH],
+      [cardX, cardY + cardH - cutBLH],
+    ];
+    const agendaCardPath = buildOrthogonalRoundedPath(agendaCardPts, cornerR);
 
-      return (
-        <g>
-          {/* Top GDG Color Ribbon */}
-          <g>
-            <rect x={0} y={0} width={W * 0.25} height={28} fill={colors.primary} />
-            <rect x={W * 0.25} y={0} width={W * 0.25} height={28} fill={colors.secondary} />
-            <rect x={W * 0.5} y={0} width={W * 0.25} height={28} fill={colors.accent} />
-            <rect x={W * 0.75} y={0} width={W * 0.25} height={28} fill={colors.success} />
-          </g>
+    // Content area inside the white stepped card
+    const innerX = cardX + Math.round(38 * u);
+    const innerTopY = cardY + tabDropH + Math.round(34 * u);
+    const innerW = cardW - Math.round(76 * u);
+    const innerBottomY = cardY + cardH - cutBLH - Math.round(24 * u);
+    const availH = Math.max(160, innerBottomY - innerTopY);
 
-          {/* Header Pill & Event Title */}
-          <g transform={`translate(${padX}, ${H * 0.065})`}>
-            <rect
-              x={0}
-              y={0}
-              width={420}
-              height={76}
-              rx={38}
-              fill={activeAccent}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth}
-            />
-            <text
-              x={210}
-              y={48}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize="30"
-              fill="#FFFFFF"
-            >
-              {eventInfo.chapterName.toUpperCase()}
-            </text>
+    // Decide 1-column vs 2-column layout based on aspect ratio, variant, and session count
+    const useTwoCols =
+      (timetableVariant === 'agenda-print' && sessions.length > 3 && aspect >= 0.68) ||
+      (isWide && sessions.length > 3);
 
-            <text
-              x={0}
-              y={170}
-              fontFamily={typography.headingFont}
-              fontWeight={typography.headingWeight}
-              fontSize="78"
-              letterSpacing={typography.letterSpacing}
-              fill={colors.textPrimary}
-            >
-              {eventInfo.eventName}
-            </text>
-            <text
-              x={0}
-              y={235}
-              fontFamily={typography.bodyFont}
-              fontWeight="600"
-              fontSize="36"
-              fill={colors.textSecondary}
-            >
-              {eventInfo.subtitle}
-            </text>
-          </g>
-
-          {/* Center Merged Speaker Portrait */}
-          {renderSpeakerPortrait(W / 2, H * 0.37, W * 0.62, W * 0.68, 'xbanner-speaker-clip')}
-
-          {/* Speaker Nameplate */}
-          <g transform={`translate(${W / 2}, ${H * 0.525})`}>
-            <rect
-              x={-340}
-              y={-56}
-              width={680}
-              height={136}
-              rx={shapes.borderRadius}
-              fill={colors.surface}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth * 1.4}
-            />
-            <text
-              x={0}
-              y={2}
-              textAnchor="middle"
-              fontFamily={typography.headingFont}
-              fontWeight="900"
-              fontSize="48"
-              fill={colors.textPrimary}
-            >
-              {speaker.name}
-            </text>
-            <text
-              x={0}
-              y={52}
-              textAnchor="middle"
-              fontFamily={typography.bodyFont}
-              fontWeight="700"
-              fontSize="28"
-              fill={activeAccent}
-            >
-              {speaker.role} · {speaker.company}
-            </text>
-          </g>
-
-          {/* Session Card */}
-          <g transform={`translate(${cardX}, ${H * 0.59})`}>
-            {shapes.shadowStyle === 'brutalist' && (
-              <rect
-                x={14}
-                y={14}
-                width={cardW}
-                height={H * 0.24}
-                rx={shapes.borderRadius * 1.2}
-                fill={colors.border}
-              />
-            )}
-            <rect
-              x={0}
-              y={0}
-              width={cardW}
-              height={H * 0.24}
-              rx={shapes.borderRadius * 1.2}
-              fill={colors.surface}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth * 1.5}
-            />
-
-            {/* Track Badge */}
-            <rect
-              x={56}
-              y={52}
-              width={360}
-              height={64}
-              rx={16}
-              fill={colors.accent}
-              stroke={colors.border}
-              strokeWidth={Math.max(2, shapes.borderWidth)}
-            />
-            <text
-              x={236}
-              y={94}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize="28"
-              fill="#202124"
-            >
-              {speaker.track}
-            </text>
-
-            {/* Session Title */}
-            <text
-              x={56}
-              y={200}
-              fontFamily={typography.headingFont}
-              fontWeight={typography.headingWeight}
-              fontSize="60"
-              fill={colors.textPrimary}
-            >
-              {titleLines.map((line, i) => (
-                <tspan key={i} x={56} dy={i === 0 ? 0 : 78}>
-                  {line}
-                </tspan>
-              ))}
-            </text>
-
-            {/* Session Meta */}
-            <line
-              x1={56}
-              y1={H * 0.24 - 190}
-              x2={cardW - 56}
-              y2={H * 0.24 - 190}
-              stroke={colors.border}
-              strokeWidth="2"
-              strokeOpacity="0.25"
-            />
-            <text
-              x={56}
-              y={H * 0.24 - 115}
-              fontFamily={typography.monoFont}
-              fontWeight="700"
-              fontSize="34"
-              fill={colors.textPrimary}
-            >
-              🕒 {speaker.dateTime}
-            </text>
-            <text
-              x={56}
-              y={H * 0.24 - 55}
-              fontFamily={typography.bodyFont}
-              fontWeight="700"
-              fontSize="34"
-              fill={colors.textSecondary}
-            >
-              📍 {speaker.venue}
-            </text>
-          </g>
-
-          {/* Bottom Standee Footer + QR Placeholder */}
-          <g transform={`translate(${padX}, ${H * 0.865})`}>
-            <rect
-              x={0}
-              y={0}
-              width={cardW}
-              height={280}
-              rx={shapes.borderRadius}
-              fill={colors.textPrimary}
-            />
-            <text
-              x={56}
-              y={105}
-              fontFamily={typography.headingFont}
-              fontWeight="800"
-              fontSize="44"
-              fill={colors.background}
-            >
-              {eventInfo.location}
-            </text>
-            <text
-              x={56}
-              y={168}
-              fontFamily={typography.monoFont}
-              fontWeight="600"
-              fontSize="30"
-              fill={colors.accent}
-            >
-              {eventInfo.ctaText}
-            </text>
-            <text
-              x={56}
-              y={222}
-              fontFamily={typography.monoFont}
-              fontWeight="600"
-              fontSize="26"
-              fill={colors.background}
-              opacity="0.75"
-            >
-              {eventInfo.hashtag}
-            </text>
-
-            {/* Simulated Vector QR Code Box */}
-            <g transform={`translate(${cardW - 230}, 40)`}>
-              <rect width={190} height={200} rx={18} fill="#FFFFFF" />
-              <rect x={22} y={22} width={44} height={44} fill="#202124" />
-              <rect x={30} y={30} width={28} height={28} fill="#FFFFFF" />
-              <rect x={36} y={36} width={16} height={16} fill="#202124" />
-
-              <rect x={124} y={22} width={44} height={44} fill="#202124" />
-              <rect x={132} y={30} width={28} height={28} fill="#FFFFFF" />
-              <rect x={138} y={36} width={16} height={16} fill="#202124" />
-
-              <rect x={22} y={114} width={44} height={44} fill="#202124" />
-              <rect x={30} y={122} width={28} height={28} fill="#FFFFFF" />
-              <rect x={36} y={128} width={16} height={16} fill="#202124" />
-
-              <rect x={78} y={26} width={14} height={14} fill="#202124" />
-              <rect x={78} y={54} width={28} height={14} fill="#202124" />
-              <rect x={26} y={78} width={36} height={14} fill="#202124" />
-              <rect x={78} y={78} width={28} height={28} fill="#4285F4" />
-              <rect x={118} y={78} width={46} height={14} fill="#202124" />
-              <rect x={82} y={118} width={30} height={14} fill="#202124" />
-              <rect x={124} y={114} width={44} height={44} fill="#202124" />
-              <rect x={136} y={126} width={20} height={20} fill="#EA4335" />
-              <text
-                x={95}
-                y={184}
-                textAnchor="middle"
-                fontFamily={typography.monoFont}
-                fontWeight="800"
-                fontSize="16"
-                fill="#202124"
-              >
-                SCAN CHECK-IN
-              </text>
-            </g>
-          </g>
-        </g>
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // LAYOUT 2: 3-FOLD PAMPHLET / LEAFLET (2480 x 1754 or wide landscape)
-    // ------------------------------------------------------------------------
-    if (layout === 'pamphlet-trifold') {
-      const colW = W / 3;
-      const innerPad = Math.round(colW * 0.085);
-      const cardW = colW - innerPad * 2;
-      const introLines = wrapTextLines(eventInfo.pamphletIntro, 24, 4);
-      const topicLines = wrapTextLines(speaker.topic, 22, 3);
-
-      return (
-        <g>
-          {/* Column 1 (Left Panel): Event Overview & Venue Map Info */}
-          <g transform={`translate(${innerPad}, ${padY})`}>
-            <rect
-              x={0}
-              y={0}
-              width={cardW}
-              height={H - padY * 2}
-              rx={shapes.borderRadius}
-              fill={colors.surface}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth}
-            />
-            <g transform="translate(44, 52)">
-              <rect
-                x={0}
-                y={0}
-                width={220}
-                height={44}
-                rx={22}
-                fill={colors.primary}
-              />
-              <text
-                x={110}
-                y={29}
-                textAnchor="middle"
-                fontFamily={typography.monoFont}
-                fontWeight="800"
-                fontSize="18"
-                fill="#FFFFFF"
-              >
-                ABOUT EVENT
-              </text>
-
-              <text
-                x={0}
-                y={110}
-                fontFamily={typography.headingFont}
-                fontWeight="900"
-                fontSize="44"
-                fill={colors.textPrimary}
-              >
-                {eventInfo.eventName}
-              </text>
-              <text
-                x={0}
-                y={155}
-                fontFamily={typography.bodyFont}
-                fontWeight="700"
-                fontSize="22"
-                fill={colors.secondary}
-              >
-                {eventInfo.subtitle}
-              </text>
-
-              <text
-                x={0}
-                y={220}
-                fontFamily={typography.bodyFont}
-                fontWeight="500"
-                fontSize="24"
-                fill={colors.textSecondary}
-              >
-                {introLines.map((line, idx) => (
-                  <tspan key={idx} x={0} dy={idx === 0 ? 0 : 38}>
-                    {line}
-                  </tspan>
-                ))}
-              </text>
-
-              {/* Venue & Date Info Box */}
-              <g transform={`translate(0, 410)`}>
-                <rect
-                  x={0}
-                  y={0}
-                  width={cardW - 88}
-                  height={210}
-                  rx={20}
-                  fill={colors.background}
-                  stroke={colors.border}
-                  strokeWidth={Math.max(2, shapes.borderWidth * 0.75)}
-                />
-                <text
-                  x={28}
-                  y={52}
-                  fontFamily={typography.monoFont}
-                  fontWeight="800"
-                  fontSize="20"
-                  fill={colors.primary}
-                >
-                  DATE &amp; TIME
-                </text>
-                <text
-                  x={28}
-                  y={88}
-                  fontFamily={typography.bodyFont}
-                  fontWeight="700"
-                  fontSize="24"
-                  fill={colors.textPrimary}
-                >
-                  {eventInfo.date}
-                </text>
-                <text
-                  x={28}
-                  y={140}
-                  fontFamily={typography.monoFont}
-                  fontWeight="800"
-                  fontSize="20"
-                  fill={colors.success}
-                >
-                  VENUE LOCATION
-                </text>
-                <text
-                  x={28}
-                  y={176}
-                  fontFamily={typography.bodyFont}
-                  fontWeight="700"
-                  fontSize="24"
-                  fill={colors.textPrimary}
-                >
-                  {eventInfo.location}
-                </text>
-              </g>
-
-              {/* Speaker Roster Preview inside Pamphlet Col 1 */}
-              <g transform="translate(0, 670)">
-                <text
-                  x={0}
-                  y={0}
-                  fontFamily={typography.monoFont}
-                  fontWeight="800"
-                  fontSize="22"
-                  fill={colors.textPrimary}
-                >
-                  FEATURED SPEAKERS ({allSpeakers.length})
-                </text>
-                {allSpeakers.slice(0, 3).map((spk, idx) => (
-                  <g key={spk.id} transform={`translate(0, ${28 + idx * 115})`}>
-                    <rect
-                      x={0}
-                      y={0}
-                      width={cardW - 88}
-                      height={98}
-                      rx={16}
-                      fill={spk.id === speaker.id ? colors.background : colors.surface}
-                      stroke={spk.id === speaker.id ? activeAccent : colors.border}
-                      strokeWidth={spk.id === speaker.id ? 3 : 1.5}
-                    />
-                    <circle cx={48} cy={49} r={30} fill={colors.primary} opacity="0.2" />
-                    {spk.photoDataUrl && (
-                      <image
-                        href={spk.photoDataUrl}
-                        x={18}
-                        y={19}
-                        width={60}
-                        height={60}
-                        preserveAspectRatio="xMidYMid slice"
-                      />
-                    )}
-                    <text
-                      x={96}
-                      y={42}
-                      fontFamily={typography.headingFont}
-                      fontWeight="800"
-                      fontSize="22"
-                      fill={colors.textPrimary}
-                    >
-                      {spk.name}
-                    </text>
-                    <text
-                      x={96}
-                      y={72}
-                      fontFamily={typography.bodyFont}
-                      fontWeight="600"
-                      fontSize="18"
-                      fill={colors.textSecondary}
-                    >
-                      {spk.company} · {spk.track}
-                    </text>
-                  </g>
-                ))}
-              </g>
-            </g>
-          </g>
-
-          {/* Column 2 (Center Panel): Timetable & Track Schedule */}
-          <g transform={`translate(${colW + innerPad}, ${padY})`}>
-            <rect
-              x={0}
-              y={0}
-              width={cardW}
-              height={H - padY * 2}
-              rx={shapes.borderRadius}
-              fill={colors.surface}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth}
-            />
-            <g transform="translate(44, 52)">
-              <rect
-                x={0}
-                y={0}
-                width={260}
-                height={44}
-                rx={22}
-                fill={colors.accent}
-                stroke={colors.border}
-                strokeWidth="2"
-              />
-              <text
-                x={130}
-                y={29}
-                textAnchor="middle"
-                fontFamily={typography.monoFont}
-                fontWeight="800"
-                fontSize="18"
-                fill="#202124"
-              >
-                SESSION TIMETABLE
-              </text>
-
-              <text
-                x={0}
-                y={105}
-                fontFamily={typography.headingFont}
-                fontWeight="900"
-                fontSize="40"
-                fill={colors.textPrimary}
-              >
-                프로그램 타임테이블
-              </text>
-
-              {eventInfo.schedule.map((item, idx) => {
-                const itemLines = wrapTextLines(item.title, 26, 2);
-                const badgeColors = [
-                  colors.primary,
-                  colors.secondary,
-                  colors.success,
-                  colors.accent,
-                ];
-                return (
-                  <g key={idx} transform={`translate(0, ${150 + idx * 255})`}>
-                    <rect
-                      x={0}
-                      y={0}
-                      width={cardW - 88}
-                      height={230}
-                      rx={20}
-                      fill={colors.background}
-                      stroke={colors.border}
-                      strokeWidth={Math.max(2, shapes.borderWidth * 0.75)}
-                    />
-                    <rect
-                      x={24}
-                      y={22}
-                      width={185}
-                      height={36}
-                      rx={10}
-                      fill={badgeColors[idx % badgeColors.length]}
-                    />
-                    <text
-                      x={116}
-                      y={46}
-                      textAnchor="middle"
-                      fontFamily={typography.monoFont}
-                      fontWeight="800"
-                      fontSize="17"
-                      fill="#FFFFFF"
-                    >
-                      {item.time}
-                    </text>
-                    <text
-                      x={225}
-                      y={46}
-                      fontFamily={typography.monoFont}
-                      fontWeight="700"
-                      fontSize="17"
-                      fill={colors.textSecondary}
-                    >
-                      {item.track}
-                    </text>
-
-                    <text
-                      x={24}
-                      y={98}
-                      fontFamily={typography.headingFont}
-                      fontWeight="800"
-                      fontSize="24"
-                      fill={colors.textPrimary}
-                    >
-                      {itemLines.map((l, i) => (
-                        <tspan key={i} x={24} dy={i === 0 ? 0 : 32}>
-                          {l}
-                        </tspan>
-                      ))}
-                    </text>
-
-                    <text
-                      x={24}
-                      y={195}
-                      fontFamily={typography.bodyFont}
-                      fontWeight="700"
-                      fontSize="20"
-                      fill={activeAccent}
-                    >
-                      🎙 {item.speaker}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
-          </g>
-
-          {/* Column 3 (Right Front Cover Panel): Featured Speaker & Cover */}
-          <g transform={`translate(${colW * 2 + innerPad}, ${padY})`}>
-            {shapes.shadowStyle === 'brutalist' && (
-              <rect
-                x={12}
-                y={12}
-                width={cardW}
-                height={H - padY * 2}
-                rx={shapes.borderRadius}
-                fill={colors.border}
-              />
-            )}
-            <rect
-              x={0}
-              y={0}
-              width={cardW}
-              height={H - padY * 2}
-              rx={shapes.borderRadius}
-              fill={colors.surface}
-              stroke={colors.border}
-              strokeWidth={shapes.borderWidth * 1.4}
-            />
-
-            {/* Cover Header */}
-            <text
-              x={cardW / 2}
-              y={88}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize="22"
-              fill={activeAccent}
-            >
-              {eventInfo.chapterName} · PAMPHLET COVER
-            </text>
-            <text
-              x={cardW / 2}
-              y={145}
-              textAnchor="middle"
-              fontFamily={typography.headingFont}
-              fontWeight="900"
-              fontSize="44"
-              fill={colors.textPrimary}
-            >
-              {eventInfo.eventName}
-            </text>
-
-            {/* Merged Speaker Portrait in Cover Panel */}
-            {renderSpeakerPortrait(
-              cardW / 2,
-              490,
-              cardW * 0.62,
-              cardW * 0.66,
-              'pamphlet-speaker-clip'
-            )}
-
-            {/* Speaker & Keynote Spotlight */}
-            <text
-              x={cardW / 2}
-              y={815}
-              textAnchor="middle"
-              fontFamily={typography.headingFont}
-              fontWeight="900"
-              fontSize="40"
-              fill={colors.textPrimary}
-            >
-              {speaker.name}
-            </text>
-            <text
-              x={cardW / 2}
-              y={858}
-              textAnchor="middle"
-              fontFamily={typography.bodyFont}
-              fontWeight="700"
-              fontSize="22"
-              fill={activeAccent}
-            >
-              {speaker.role} @ {speaker.company}
-            </text>
-
-            <g transform={`translate(48, 915)`}>
-              <rect
-                x={0}
-                y={0}
-                width={cardW - 96}
-                height={290}
-                rx={24}
-                fill={colors.background}
-                stroke={colors.border}
-                strokeWidth={shapes.borderWidth}
-              />
-              <text
-                x={32}
-                y={50}
-                fontFamily={typography.monoFont}
-                fontWeight="800"
-                fontSize="20"
-                fill={colors.secondary}
-              >
-                HIGHLIGHT SESSION · {speaker.track}
-              </text>
-              <text
-                x={32}
-                y={104}
-                fontFamily={typography.headingFont}
-                fontWeight="800"
-                fontSize="28"
-                fill={colors.textPrimary}
-              >
-                {topicLines.map((line, i) => (
-                  <tspan key={i} x={32} dy={i === 0 ? 0 : 40}>
-                    {line}
-                  </tspan>
-                ))}
-              </text>
-              <text
-                x={32}
-                y={252}
-                fontFamily={typography.monoFont}
-                fontWeight="700"
-                fontSize="20"
-                fill={colors.textSecondary}
-              >
-                {speaker.dateTime} | {speaker.venue}
-              </text>
-            </g>
-
-            {/* Bottom Cover Footer */}
-            <text
-              x={cardW / 2}
-              y={H - padY * 2 - 48}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize="22"
-              fill={colors.textSecondary}
-            >
-              {eventInfo.hashtag}
-            </text>
-          </g>
-        </g>
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // LAYOUT 3: SESSION BANNER (Horizontal 16:9 or 1.91:1 LinkedIn/YouTube)
-    // ------------------------------------------------------------------------
-    if (layout === 'session-banner') {
-      const leftW = W * 0.56;
-      const titleLines = wrapTextLines(speaker.topic, 22, 3);
-      const fontSizeTitle = Math.round(W * 0.036);
-
-      return (
-        <g>
-          {/* Main Surface Card */}
-          {shapes.shadowStyle === 'brutalist' && (
-            <rect
-              x={padX + 12}
-              y={padY + 12}
-              width={W - padX * 2}
-              height={H - padY * 2}
-              rx={shapes.borderRadius}
-              fill={colors.border}
-            />
-          )}
-          <rect
-            x={padX}
-            y={padY}
-            width={W - padX * 2}
-            height={H - padY * 2}
-            rx={shapes.borderRadius}
-            fill={colors.surface}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth * 1.2}
-          />
-
-          {/* Left Column: Event Info + Session Title + Speaker Meta */}
-          <g transform={`translate(${padX + W * 0.045}, ${padY + H * 0.11})`}>
-            {/* Track Badge */}
-            <rect
-              x={0}
-              y={0}
-              width={Math.max(240, W * 0.22)}
-              height={Math.max(44, H * 0.065)}
-              rx={22}
-              fill={activeAccent}
-              stroke={colors.border}
-              strokeWidth={Math.max(2, shapes.borderWidth * 0.8)}
-            />
-            <text
-              x={Math.max(120, W * 0.11)}
-              y={Math.max(29, H * 0.044)}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize={Math.round(H * 0.028)}
-              fill="#FFFFFF"
-            >
-              {speaker.track}
-            </text>
-
-            {/* Event Subtitle */}
-            <text
-              x={0}
-              y={H * 0.14}
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize={Math.round(H * 0.03)}
-              fill={colors.textSecondary}
-            >
-              {eventInfo.eventName} · {eventInfo.chapterName}
-            </text>
-
-            {/* Session Title */}
-            <text
-              x={0}
-              y={H * 0.24}
-              fontFamily={typography.headingFont}
-              fontWeight={typography.headingWeight}
-              fontSize={fontSizeTitle}
-              letterSpacing={typography.letterSpacing}
-              fill={colors.textPrimary}
-            >
-              {titleLines.map((line, idx) => (
-                <tspan key={idx} x={0} dy={idx === 0 ? 0 : fontSizeTitle * 1.28}>
-                  {line}
-                </tspan>
-              ))}
-            </text>
-
-            {/* Speaker Name & Role */}
-            <g transform={`translate(0, ${H * 0.56})`}>
-              <text
-                x={0}
-                y={0}
-                fontFamily={typography.headingFont}
-                fontWeight="900"
-                fontSize={Math.round(H * 0.048)}
-                fill={colors.textPrimary}
-              >
-                {speaker.name}
-              </text>
-              <text
-                x={0}
-                y={H * 0.052}
-                fontFamily={typography.bodyFont}
-                fontWeight="700"
-                fontSize={Math.round(H * 0.03)}
-                fill={activeAccent}
-              >
-                {speaker.role} · {speaker.company}
-              </text>
-            </g>
-
-            {/* Date & Venue Footer */}
-            <g transform={`translate(0, ${H * 0.71})`}>
-              <text
-                x={0}
-                y={0}
-                fontFamily={typography.monoFont}
-                fontWeight="700"
-                fontSize={Math.round(H * 0.026)}
-                fill={colors.textSecondary}
-              >
-                📅 {speaker.dateTime} &nbsp;|&nbsp; 📍 {speaker.venue}
-              </text>
-            </g>
-          </g>
-
-          {/* Right Column: Merged Speaker Photo */}
-          {renderSpeakerPortrait(
-            leftW + (W - leftW - padX) * 0.45,
-            H * 0.5,
-            Math.min(W * 0.28, H * 0.62),
-            Math.min(W * 0.3, H * 0.68),
-            'banner-speaker-clip'
-          )}
-        </g>
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // LAYOUT 4: NAMETAG / PASS BADGE (1000 x 1400)
-    // ------------------------------------------------------------------------
-    if (layout === 'nametag-badge') {
-      return (
-        <g>
-          {/* Lanyard Slot Hole at Top */}
-          <rect
-            x={W / 2 - 90}
-            y={48}
-            width={180}
-            height={36}
-            rx={18}
-            fill={colors.background}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth}
-          />
-
-          {/* Top Header Block */}
-          <rect
-            x={padX}
-            y={120}
-            width={W - padX * 2}
-            height={H - 200}
-            rx={shapes.borderRadius * 1.2}
-            fill={colors.surface}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth * 1.5}
-          />
-
-          {/* Top Color Header inside Badge */}
-          <path
-            d={`M ${padX} ${120 + shapes.borderRadius * 1.2}
-                Q ${padX} 120 ${padX + shapes.borderRadius * 1.2} 120
-                L ${W - padX - shapes.borderRadius * 1.2} 120
-                Q ${W - padX} 120 ${W - padX} ${120 + shapes.borderRadius * 1.2}
-                L ${W - padX} 310
-                L ${padX} 310 Z`}
-            fill={activeAccent}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth}
-          />
-          <text
-            x={W / 2}
-            y={205}
-            textAnchor="middle"
-            fontFamily={typography.headingFont}
-            fontWeight="900"
-            fontSize="42"
-            fill="#FFFFFF"
-          >
-            {eventInfo.eventName}
-          </text>
-          <text
-            x={W / 2}
-            y={258}
-            textAnchor="middle"
-            fontFamily={typography.monoFont}
-            fontWeight="700"
-            fontSize="24"
-            fill="#FFFFFF"
-            opacity="0.9"
-          >
-            {eventInfo.chapterName}
-          </text>
-
-          {/* Speaker Portrait */}
-          {renderSpeakerPortrait(W / 2, 590, 420, 440, 'badge-speaker-clip')}
-
-          {/* Speaker Name & Company */}
-          <text
-            x={W / 2}
-            y={915}
-            textAnchor="middle"
-            fontFamily={typography.headingFont}
-            fontWeight="900"
-            fontSize="54"
-            fill={colors.textPrimary}
-          >
-            {speaker.name}
-          </text>
-          <text
-            x={W / 2}
-            y={975}
-            textAnchor="middle"
-            fontFamily={typography.bodyFont}
-            fontWeight="700"
-            fontSize="30"
-            fill={activeAccent}
-          >
-            {speaker.company}
-          </text>
-          <text
-            x={W / 2}
-            y={1022}
-            textAnchor="middle"
-            fontFamily={typography.bodyFont}
-            fontWeight="600"
-            fontSize="24"
-            fill={colors.textSecondary}
-          >
-            {speaker.role}
-          </text>
-
-          {/* Role Pill Bottom */}
-          <rect
-            x={W / 2 - 220}
-            y={1090}
-            width={440}
-            height={96}
-            rx={48}
-            fill={colors.secondary}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth}
-          />
-          <text
-            x={W / 2}
-            y={1152}
-            textAnchor="middle"
-            fontFamily={typography.monoFont}
-            fontWeight="900"
-            fontSize="40"
-            letterSpacing="0.08em"
-            fill="#FFFFFF"
-          >
-            SPEAKER
-          </text>
-        </g>
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // LAYOUT 5: MAIN EVENT POSTER (A2/A3 or 4:5 Portrait)
-    // ------------------------------------------------------------------------
-    if (layout === 'main-poster') {
-      const cardW = W - padX * 2;
-      const titleLines = wrapTextLines(speaker.topic, 20, 3);
-
-      return (
-        <g>
-          {/* Poster Outer Frame */}
-          {shapes.shadowStyle === 'brutalist' && (
-            <rect
-              x={padX + 14}
-              y={padY + 14}
-              width={cardW}
-              height={H - padY * 2}
-              rx={shapes.borderRadius * 1.2}
-              fill={colors.border}
-            />
-          )}
-          <rect
-            x={padX}
-            y={padY}
-            width={cardW}
-            height={H - padY * 2}
-            rx={shapes.borderRadius * 1.2}
-            fill={colors.surface}
-            stroke={colors.border}
-            strokeWidth={shapes.borderWidth * 1.4}
-          />
-
-          {/* Event Header Section */}
-          <g transform={`translate(${padX + 64}, ${padY + 86})`}>
-            <rect
-              x={0}
-              y={0}
-              width={320}
-              height={54}
-              rx={27}
-              fill={colors.accent}
-              stroke={colors.border}
-              strokeWidth={Math.max(2, shapes.borderWidth)}
-            />
-            <text
-              x={160}
-              y={36}
-              textAnchor="middle"
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize="24"
-              fill="#202124"
-            >
-              {eventInfo.chapterName}
-            </text>
-
-            <text
-              x={0}
-              y={136}
-              fontFamily={typography.headingFont}
-              fontWeight="900"
-              fontSize={Math.round(W * 0.056)}
-              letterSpacing={typography.letterSpacing}
-              fill={colors.textPrimary}
-            >
-              {eventInfo.eventName}
-            </text>
-            <text
-              x={0}
-              y={192}
-              fontFamily={typography.bodyFont}
-              fontWeight="700"
-              fontSize={Math.round(W * 0.026)}
-              fill={activeAccent}
-            >
-              {eventInfo.subtitle}
-            </text>
-          </g>
-
-          {/* Center Speaker Feature */}
-          {renderSpeakerPortrait(
-            W / 2,
-            H * 0.48,
-            Math.min(W * 0.48, H * 0.34),
-            Math.min(W * 0.52, H * 0.36),
-            'poster-speaker-clip'
-          )}
-
-          {/* Bottom Keynote / Session Block */}
-          <g transform={`translate(${padX + 64}, ${H * 0.69})`}>
-            <text
-              x={0}
-              y={0}
-              fontFamily={typography.monoFont}
-              fontWeight="800"
-              fontSize={Math.round(W * 0.022)}
-              fill={colors.secondary}
-            >
-              {speaker.track.toUpperCase()} · {speaker.name} ({speaker.company})
-            </text>
-
-            <text
-              x={0}
-              y={Math.round(W * 0.048)}
-              fontFamily={typography.headingFont}
-              fontWeight="900"
-              fontSize={Math.round(W * 0.038)}
-              fill={colors.textPrimary}
-            >
-              {titleLines.map((line, idx) => (
-                <tspan key={idx} x={0} dy={idx === 0 ? 0 : Math.round(W * 0.048)}>
-                  {line}
-                </tspan>
-              ))}
-            </text>
-
-            {/* Event Date & Location Bar */}
-            <g transform={`translate(0, ${H * 0.17})`}>
-              <rect
-                x={0}
-                y={0}
-                width={cardW - 128}
-                height={Math.round(H * 0.065)}
-                rx={20}
-                fill={colors.background}
-                stroke={colors.border}
-                strokeWidth={shapes.borderWidth}
-              />
-              <text
-                x={32}
-                y={Math.round(H * 0.041)}
-                fontFamily={typography.monoFont}
-                fontWeight="800"
-                fontSize={Math.round(W * 0.022)}
-                fill={colors.textPrimary}
-              >
-                📅 {eventInfo.date} &nbsp;·&nbsp; 📍 {eventInfo.location}
-              </text>
-            </g>
-          </g>
-        </g>
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // LAYOUT 6 (DEFAULT): SPEAKER SPOTLIGHT CARD (1:1 Square / 9:16 Story)
-    // ------------------------------------------------------------------------
-    const isTallStory = H / W > 1.4;
-    const cardW = W - padX * 2;
-    const cardH = H - padY * 2;
-    const titleLines = wrapTextLines(speaker.topic, 22, 3);
-    const portraitSize = isTallStory ? W * 0.54 : Math.min(W, H) * 0.4;
-    const portraitCy = isTallStory ? H * 0.38 : H * 0.41;
+    const cols = useTwoCols ? 2 : 1;
+    const rowsPerCol = Math.max(1, Math.ceil(sessions.length / cols));
+    const colGap = Math.round(36 * u);
+    const colW = cols === 2 ? (innerW - colGap) / 2 : innerW;
+    const rowH = availH / rowsPerCol;
 
     return (
       <g>
-        {/* Main Card Container */}
-        {shapes.shadowStyle === 'brutalist' && (
-          <rect
-            x={padX + 12}
-            y={padY + 12}
-            width={cardW}
-            height={cardH}
-            rx={shapes.borderRadius}
-            fill={colors.border}
+        {/* Top-Right Header Cutout on Canvas: Track @DevFest + Location Pill + Decorative Motif */}
+        <g>
+          <TrackAtDevFestLockup
+            x={cardX + tabW + Math.round(24 * u)}
+            y={cardY + Math.round(4 * u)}
+            scale={u * (isWide ? 0.92 : 0.78)}
+            trackLabel={eventMeta.trackHeader.replace(/\s*@DevFest$/i, '') || 'DevFest'}
+            locationText={eventMeta.locationText}
+            yearText={isWide ? eventMeta.yearText : undefined}
+            colorway={colorway}
+            strokeWidth={sw}
+            textColorOverride={canvasTextColor}
           />
-        )}
-        <rect
-          x={padX}
-          y={padY}
-          width={cardW}
-          height={cardH}
-          rx={shapes.borderRadius}
-          fill={colors.surface}
-          stroke={colors.border}
-          strokeWidth={shapes.borderWidth * 1.25}
+
+          {/* Rightmost motif in top cutout: Double Slash // or Scallop Arches */}
+          {timetableVariant === 'agenda-print' ? (
+            <ScallopArches
+              x={cardX + cardW - 155 * u}
+              y={cardY + tabDropH - 44 * u}
+              width={145 * u}
+              fill={colorway.scallopFill}
+              stroke={colorway.ink}
+              strokeWidth={sw}
+            />
+          ) : (
+            <DoubleSlashGlyph
+              x={cardX + cardW - 105 * u}
+              y={cardY + 12 * u}
+              height={Math.min(82 * u, tabDropH - 20 * u)}
+              fill={colorway.slashFill}
+              stroke={colorway.ink}
+              strokeWidth={sw}
+            />
+          )}
+        </g>
+
+        {/* Main Stepped White Container Card */}
+        <path
+          d={agendaCardPath}
+          fill={colorway.cardSurface}
+          stroke={colorway.ink}
+          strokeWidth={sw}
+          strokeLinejoin="round"
         />
 
-        {/* Top Event Header Bar */}
-        <g transform={`translate(${padX + 48}, ${padY + 52})`}>
-          <rect
-            x={0}
-            y={0}
-            width={280}
-            height={48}
-            rx={24}
-            fill={activeAccent}
-            stroke={colors.border}
-            strokeWidth={Math.max(2, shapes.borderWidth * 0.75)}
-          />
-          <text
-            x={140}
-            y={32}
-            textAnchor="middle"
-            fontFamily={typography.monoFont}
-            fontWeight="800"
-            fontSize="20"
-            fill="#FFFFFF"
-          >
-            {speaker.track}
-          </text>
-
-          <text
-            x={cardW - 96}
-            y={32}
-            textAnchor="end"
-            fontFamily={typography.headingFont}
-            fontWeight="800"
-            fontSize="24"
-            fill={colors.textSecondary}
-          >
-            {eventInfo.eventName}
-          </text>
-        </g>
-
-        {/* Merged Speaker Portrait */}
-        {renderSpeakerPortrait(
-          W / 2,
-          portraitCy,
-          portraitSize,
-          portraitSize * 1.05,
-          'spotlight-speaker-clip'
-        )}
-
-        {/* Speaker Name & Role Badge */}
-        <g transform={`translate(${W / 2}, ${portraitCy + portraitSize * 0.62})`}>
+        {/* Top-Left Tab Title: "Agenda" + Date/Venue */}
+        <g transform={`translate(${cardX + 38 * u}, ${cardY + 64 * u})`}>
           <text
             x={0}
             y={0}
-            textAnchor="middle"
-            fontFamily={typography.headingFont}
-            fontWeight="900"
-            fontSize={Math.round(W * 0.042)}
-            fill={colors.textPrimary}
+            fill={colorway.ink}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={52 * u}
+            fontWeight={800}
+            letterSpacing="-0.03em"
           >
-            {speaker.name}
+            {eventMeta.agendaTitle || 'Agenda'}
           </text>
           <text
             x={0}
-            y={Math.round(W * 0.038)}
-            textAnchor="middle"
-            fontFamily={typography.bodyFont}
-            fontWeight="700"
-            fontSize={Math.round(W * 0.024)}
-            fill={activeAccent}
+            y={34 * u}
+            fill={colorway.mutedInk}
+            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+            fontSize={16 * u}
+            fontWeight={600}
           >
-            {speaker.role} · {speaker.company}
+            {eventMeta.dateVenueSubtext}
           </text>
         </g>
 
-        {/* Session Topic Box */}
-        <g
-          transform={`translate(${padX + 48}, ${
-            isTallStory ? H * 0.64 : H * 0.68
-          })`}
+        {/* Session List Inside Stepped White Card */}
+        {sessions.map((item, index) => {
+          const colIdx = cols === 2 ? Math.floor(index / rowsPerCol) : 0;
+          const rowIdx = cols === 2 ? index % rowsPerCol : index;
+          const sx = innerX + colIdx * (colW + colGap);
+          const sy = innerTopY + rowIdx * rowH;
+
+          const compactRow = rowH < 130 * u;
+          const titleFontSize = Math.min(26 * u, Math.max(17 * u, rowH * 0.2));
+          const timeFontSize = Math.min(20 * u, Math.max(14 * u, rowH * 0.15));
+          const metaFontSize = Math.min(18 * u, Math.max(13 * u, rowH * 0.14));
+
+          const avatarSize = compactRow ? 0 : Math.min(64 * u, rowH * 0.48);
+          const textOffsetX = avatarSize > 0 ? avatarSize + 20 * u : 0;
+          const availTextW = colW - textOffsetX;
+          const maxCharsPerLine = Math.max(18, Math.floor(availTextW / (titleFontSize * 0.62)));
+
+          const titleLines = wrapTextLines(
+            item.title,
+            maxCharsPerLine,
+            compactRow ? 1 : 2
+          );
+          const descLines =
+            !compactRow && rowH >= 155 * u
+              ? wrapTextLines(item.description, Math.floor(maxCharsPerLine * 1.25), 1)
+              : [];
+
+          const clipAvatarId = `agenda-avatar-${item.id}-${index}`;
+
+          return (
+            <g key={item.id || index} transform={`translate(${sx.toFixed(1)}, ${sy.toFixed(1)})`}>
+              {/* Top border separator for rows after the first in each column */}
+              {rowIdx > 0 && (
+                <line
+                  x1={0}
+                  y1={-8 * u}
+                  x2={colW}
+                  y2={-8 * u}
+                  stroke="#e2e5e9"
+                  strokeWidth={Math.max(1, sw * 0.55)}
+                />
+              )}
+
+              {/* Optional Speaker Circular Avatar */}
+              {avatarSize > 0 && item.photoDataUrl && (
+                <g transform={`translate(0, ${10 * u})`}>
+                  <defs>
+                    <clipPath id={clipAvatarId}>
+                      <rect
+                        x={0}
+                        y={0}
+                        width={avatarSize}
+                        height={avatarSize}
+                        rx={14 * u}
+                      />
+                    </clipPath>
+                  </defs>
+                  <g clipPath={`url(#${clipAvatarId})`}>
+                    <rect
+                      x={0}
+                      y={0}
+                      width={avatarSize}
+                      height={avatarSize}
+                      fill="#e8eef7"
+                    />
+                    <image
+                      href={item.photoDataUrl}
+                      x={0}
+                      y={0}
+                      width={avatarSize}
+                      height={avatarSize}
+                      preserveAspectRatio="xMidYMid slice"
+                    />
+                  </g>
+                  <rect
+                    x={0}
+                    y={0}
+                    width={avatarSize}
+                    height={avatarSize}
+                    rx={14 * u}
+                    fill="none"
+                    stroke={colorway.ink}
+                    strokeWidth={sw * 0.75}
+                  />
+                </g>
+              )}
+
+              <g transform={`translate(${textOffsetX.toFixed(1)}, 0)`}>
+                {/* Time in DevFest Monospace Accent + Track/Room Pill */}
+                <text
+                  x={0}
+                  y={timeFontSize + 4 * u}
+                  fill={colorway.timeAccent}
+                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                  fontSize={timeFontSize}
+                  fontWeight={700}
+                >
+                  {item.time}
+                </text>
+
+                {/* Track & Room Badge */}
+                <text
+                  x={155 * u}
+                  y={timeFontSize + 4 * u}
+                  fill={colorway.mutedInk}
+                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                  fontSize={metaFontSize * 0.92}
+                  fontWeight={600}
+                >
+                  {[item.track, item.room].filter(Boolean).join(' · ')}
+                </text>
+
+                {/* Session Title */}
+                {titleLines.map((line, lIdx) => (
+                  <text
+                    key={lIdx}
+                    x={0}
+                    y={timeFontSize + 8 * u + (lIdx + 1) * (titleFontSize * 1.24)}
+                    fill={colorway.ink}
+                    fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                    fontSize={titleFontSize}
+                    fontWeight={800}
+                    letterSpacing="-0.02em"
+                  >
+                    {line}
+                  </text>
+                ))}
+
+                {/* Optional 1-line Description */}
+                {descLines.map((line, dIdx) => (
+                  <text
+                    key={dIdx}
+                    x={0}
+                    y={
+                      timeFontSize +
+                      12 * u +
+                      titleLines.length * (titleFontSize * 1.24) +
+                      (dIdx + 1) * (metaFontSize * 1.2)
+                    }
+                    fill={colorway.mutedInk}
+                    fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                    fontSize={metaFontSize * 0.95}
+                    fontWeight={500}
+                  >
+                    {line}
+                  </text>
+                ))}
+
+                {/* Speaker Name & Affiliation in Monospace (#595959) */}
+                <text
+                  x={0}
+                  y={
+                    timeFontSize +
+                    14 * u +
+                    titleLines.length * (titleFontSize * 1.24) +
+                    descLines.length * (metaFontSize * 1.2) +
+                    metaFontSize * 1.2
+                  }
+                  fill={colorway.mutedInk}
+                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                  fontSize={metaFontSize}
+                  fontWeight={600}
+                >
+                  {`${item.name}${item.affiliation ? ` · ${item.affiliation}` : ''}${
+                    item.role ? ` (${item.role})` : ''
+                  }`}
+                </text>
+              </g>
+            </g>
+          );
+        })}
+
+        {/* Bottom-Left Cutout on Canvas: GDG `< >` Logo + 3-Circle Caterpillar Blob */}
+        <GdgBracketLogo
+          x={cardX + 8 * u}
+          y={cardY + cardH - cutBLH + (cutBLH - 40 * u) / 2}
+          scale={u * 1.0}
+          strokeColor={colorway.ink}
+          strokeWidth={sw}
+        />
+
+        <CaterpillarBlob
+          x={cardX + 112 * u}
+          y={cardY + cardH - cutBLH + (cutBLH - 68 * u) / 2}
+          width={Math.min(185 * u, cutBLW - 125 * u)}
+          fill={colorway.caterpillarFill}
+          stroke={colorway.ink}
+          strokeWidth={sw}
+        />
+
+        {/* Bottom-Right Chapter Label inside card */}
+        <text
+          x={cardX + cardW - 32 * u}
+          y={cardY + cardH - 24 * u}
+          textAnchor="end"
+          fill={colorway.mutedInk}
+          fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+          fontSize={16 * u}
+          fontWeight={600}
         >
-          <rect
-            x={0}
-            y={0}
-            width={cardW - 96}
-            height={isTallStory ? H * 0.2 : H * 0.19}
-            rx={Math.max(16, shapes.borderRadius * 0.7)}
-            fill={colors.background}
-            stroke={colors.border}
-            strokeWidth={Math.max(2, shapes.borderWidth * 0.8)}
-          />
-          <text
-            x={36}
-            y={52}
-            fontFamily={typography.headingFont}
-            fontWeight={typography.headingWeight}
-            fontSize={Math.round(W * 0.032)}
-            letterSpacing={typography.letterSpacing}
-            fill={colors.textPrimary}
-          >
-            {titleLines.map((line, idx) => (
-              <tspan key={idx} x={36} dy={idx === 0 ? 0 : Math.round(W * 0.042)}>
-                {line}
-              </tspan>
-            ))}
-          </text>
-
-          {/* Tags & Time */}
-          <text
-            x={36}
-            y={(isTallStory ? H * 0.2 : H * 0.19) - 28}
-            fontFamily={typography.monoFont}
-            fontWeight="700"
-            fontSize={Math.round(W * 0.02)}
-            fill={colors.textSecondary}
-          >
-            🕒 {speaker.dateTime} &nbsp;·&nbsp; 📍 {speaker.venue}
-          </text>
-        </g>
-
-        {/* Bottom Hashtag / Tags Row */}
-        <g transform={`translate(${padX + 48}, ${H - padY - 34})`}>
-          <text
-            x={0}
-            y={0}
-            fontFamily={typography.monoFont}
-            fontWeight="700"
-            fontSize="20"
-            fill={colors.textSecondary}
-          >
-            {speaker.tags.join('  ')}
-          </text>
-          <text
-            x={cardW - 96}
-            y={0}
-            textAnchor="end"
-            fontFamily={typography.monoFont}
-            fontWeight="800"
-            fontSize="20"
-            fill={activeAccent}
-          >
-            {eventInfo.chapterName}
-          </text>
-        </g>
+          {`${eventMeta.chapterLabel} · ${eventMeta.eventTitle} ${eventMeta.locationText} ${eventMeta.yearText}`}
+        </text>
       </g>
     );
   };
@@ -1706,285 +1804,66 @@ export const CanvasSvgRenderer: React.FC<CanvasSvgRendererProps> = ({
       ref={svgRef}
       xmlns="http://www.w3.org/2000/svg"
       viewBox={`0 0 ${W} ${H}`}
-      width={W}
-      height={H}
-      className="w-full h-full select-none"
+      width="100%"
+      height="100%"
       style={{
-        fontFamily: typography.bodyFont,
+        display: 'block',
+        maxWidth: '100%',
+        maxHeight: '100%',
+        userSelect: 'none',
       }}
     >
       <defs>
-        {/* Pattern Definitions */}
-        <pattern
-          id="pattern-dots"
-          x="0"
-          y="0"
-          width="36"
-          height="36"
-          patternUnits="userSpaceOnUse"
-        >
-          <circle cx="6" cy="6" r="2.5" fill={colors.textSecondary} opacity="0.35" />
-        </pattern>
-
-        <pattern
-          id="pattern-grid"
-          x="0"
-          y="0"
-          width="60"
-          height="60"
-          patternUnits="userSpaceOnUse"
-        >
-          <path
-            d="M 60 0 L 0 0 0 60"
-            fill="none"
-            stroke={colors.border}
-            strokeWidth="1.5"
-            strokeOpacity="0.25"
-          />
-        </pattern>
-
-        {/* Gradients */}
-        <linearGradient id="aiAuraGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={colors.primary} />
-          <stop offset="50%" stopColor={colors.secondary} />
-          <stop offset="100%" stopColor={colors.accent} />
-        </linearGradient>
-
-        <linearGradient id="speakerBackdropGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={colors.primary} stopOpacity="0.18" />
-          <stop offset="100%" stopColor={colors.accent} stopOpacity="0.28" />
-        </linearGradient>
-
-        <linearGradient id="bottomVignette" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#000000" stopOpacity="0" />
-          <stop offset="100%" stopColor="#000000" stopOpacity="0.35" />
-        </linearGradient>
-
-        {/* Blur Filters */}
-        <filter id="blurGlow" x="-40%" y="-40%" width="180%" height="180%">
-          <feGaussianBlur stdDeviation="28" />
+        <filter id="df-filter-grayscale">
+          <feColorMatrix type="saturate" values="0" />
         </filter>
-        <filter id="blurGlowLarge" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="95" />
-        </filter>
-
-        {/* Photo Color Filters */}
-        <filter id="filter-grayscale">
-          <feColorMatrix
-            type="matrix"
-            values="0.33 0.33 0.33 0 0
-                    0.33 0.33 0.33 0 0
-                    0.33 0.33 0.33 0 0
-                    0    0    0    1 0"
-          />
-        </filter>
-        <filter id="filter-duotone-blue">
-          <feColorMatrix
-            type="matrix"
-            values="0.25 0.45 0.15 0 0.05
-                    0.30 0.55 0.20 0 0.12
-                    0.50 0.70 0.40 0 0.30
-                    0    0    0    1 0"
-          />
-        </filter>
-        <filter id="filter-duotone-warm">
-          <feColorMatrix
-            type="matrix"
-            values="0.60 0.40 0.20 0 0.15
-                    0.35 0.45 0.15 0 0.05
-                    0.20 0.25 0.20 0 0.02
-                    0    0    0    1 0"
-          />
-        </filter>
-        <filter id="filter-contrast">
+        <filter id="df-filter-contrast">
           <feComponentTransfer>
-            <feFuncR type="linear" slope="1.22" intercept="-0.08" />
-            <feFuncG type="linear" slope="1.22" intercept="-0.08" />
-            <feFuncB type="linear" slope="1.22" intercept="-0.08" />
+            <feFuncR type="linear" slope="1.15" intercept="-0.05" />
+            <feFuncG type="linear" slope="1.15" intercept="-0.05" />
+            <feFuncB type="linear" slope="1.15" intercept="-0.05" />
           </feComponentTransfer>
         </filter>
       </defs>
 
-      {/* 1. Base Canvas Background */}
-      {!transparentBg && <rect x="0" y="0" width={W} height={H} fill={colors.background} />}
+      {/* Canvas Background */}
+      <rect x={0} y={0} width={W} height={H} fill={colorway.canvasBg} />
 
-      {/* 2. Design System Pattern Layer */}
-      {!transparentBg && renderPatternOverlay()}
+      {/* Main Content */}
+      {mode === 'speaker' ? renderSpeakerAsset() : renderTimetableAsset()}
 
-      {/* 3. Uploaded Background Base Assets */}
-      {backgroundAssets.map((asset) => {
-        const assetW = W * asset.scale;
-        const assetH = H * asset.scale;
-        const assetX = (asset.x / 100) * W - assetW / 2;
-        const assetY = (asset.y / 100) * H - assetH / 2;
-        return (
-          <image
-            key={asset.id}
-            href={asset.dataUrl}
-            x={assetX}
-            y={assetY}
-            width={assetW}
-            height={assetH}
-            opacity={asset.opacity}
-            preserveAspectRatio="xMidYMid slice"
-          />
-        );
-      })}
-
-      {/* 4. Core Template & Merged Speaker Layout */}
-      {renderLayoutContent()}
-
-      {/* 5. Uploaded Frame Overlay Assets */}
-      {frameAssets.map((asset) => (
+      {/* Custom Uploaded Logo (if any) */}
+      {eventMeta.customLogoDataUrl && (
         <image
-          key={asset.id}
-          href={asset.dataUrl}
-          x={0}
-          y={0}
-          width={W}
-          height={H}
-          opacity={asset.opacity}
-          preserveAspectRatio="none"
+          href={eventMeta.customLogoDataUrl}
+          x={W - 160 * u}
+          y={H - 85 * u}
+          width={120 * u}
+          height={50 * u}
+          preserveAspectRatio="xMaxYMid meet"
         />
-      ))}
+      )}
 
-      {/* 6. Foreground Base Assets (Logos, Stickers, Sponsor Bars) */}
-      {foregroundAssets.map((asset) => {
-        const baseSize =
-          asset.type === 'sponsor'
-            ? W * 0.42
-            : asset.type === 'logo'
-            ? Math.min(W, H) * 0.18
-            : Math.min(W, H) * 0.16;
-        const w = baseSize * asset.scale;
-        const h = baseSize * 0.45 * asset.scale;
-        const x = (asset.x / 100) * W;
-        const y = (asset.y / 100) * H;
-        return (
-          <image
-            key={asset.id}
-            href={asset.dataUrl}
-            x={x}
-            y={y}
-            width={w}
-            height={h}
-            opacity={asset.opacity}
-            preserveAspectRatio="xMidYMid meet"
+      {/* Optional Print / X-Banner Crop & Grommet Marks */}
+      {eventMeta.showCropMarks && (
+        <g stroke={canvasTextColor} strokeWidth={1.5 * u} opacity={0.65} fill="none">
+          {/* Corner crop marks */}
+          <path d={`M ${18 * u} ${36 * u} V ${18 * u} H ${36 * u}`} />
+          <path d={`M ${W - 36 * u} ${18 * u} H ${W - 18 * u} V ${36 * u}`} />
+          <path d={`M ${18 * u} ${H - 36 * u} V ${H - 18 * u} H ${36 * u}`} />
+          <path d={`M ${W - 36 * u} ${H - 18 * u} H ${W - 18 * u} V ${H - 36 * u}`} />
+          {/* X-Banner Grommet punch circles */}
+          <circle cx={42 * u} cy={42 * u} r={10 * u} strokeDasharray={`${4 * u} ${3 * u}`} />
+          <circle cx={W - 42 * u} cy={42 * u} r={10 * u} strokeDasharray={`${4 * u} ${3 * u}`} />
+          <circle cx={42 * u} cy={H - 42 * u} r={10 * u} strokeDasharray={`${4 * u} ${3 * u}`} />
+          <circle
+            cx={W - 42 * u}
+            cy={H - 42 * u}
+            r={10 * u}
+            strokeDasharray={`${4 * u} ${3 * u}`}
           />
-        );
-      })}
-
-      {/* 7. Print Guides (Bleed Line, Safe Area, Tri-fold Lines, X-Banner Grommets) */}
-      {showPrintGuides && (
-        <g pointerEvents="none">
-          {/* Bleed Margin (Red Dashed) */}
-          {preset.bleedPx && (
-            <g>
-              <rect
-                x={preset.bleedPx}
-                y={preset.bleedPx}
-                width={W - preset.bleedPx * 2}
-                height={H - preset.bleedPx * 2}
-                fill="none"
-                stroke="#EF4444"
-                strokeWidth="3"
-                strokeDasharray="14 10"
-              />
-              <text
-                x={preset.bleedPx + 14}
-                y={preset.bleedPx + 28}
-                fontFamily="monospace"
-                fontWeight="700"
-                fontSize="20"
-                fill="#EF4444"
-              >
-                재단선 (BLEED LINE)
-              </text>
-            </g>
-          )}
-
-          {/* Safe Area Margin (Cyan Dashed) */}
-          {preset.safeMarginPx && (
-            <g>
-              <rect
-                x={preset.safeMarginPx}
-                y={preset.safeMarginPx}
-                width={W - preset.safeMarginPx * 2}
-                height={H - preset.safeMarginPx * 2}
-                fill="none"
-                stroke="#06B6D4"
-                strokeWidth="2.5"
-                strokeDasharray="8 8"
-              />
-              <text
-                x={preset.safeMarginPx + 14}
-                y={preset.safeMarginPx + 28}
-                fontFamily="monospace"
-                fontWeight="700"
-                fontSize="18"
-                fill="#06B6D4"
-              >
-                안전 영역 (SAFE ZONE)
-              </text>
-            </g>
-          )}
-
-          {/* Pamphlet Fold Lines (Magenta Center-Dash) */}
-          {preset.foldLines &&
-            preset.foldLines.map((ratio, idx) => {
-              const fx = Math.round(W * ratio);
-              return (
-                <g key={idx}>
-                  <line
-                    x1={fx}
-                    y1={0}
-                    x2={fx}
-                    y2={H}
-                    stroke="#EC4899"
-                    strokeWidth="3"
-                    strokeDasharray="20 10 6 10"
-                  />
-                  <rect x={fx - 75} y={18} width={150} height={32} rx={8} fill="#EC4899" />
-                  <text
-                    x={fx}
-                    y={40}
-                    textAnchor="middle"
-                    fontFamily="monospace"
-                    fontWeight="800"
-                    fontSize="16"
-                    fill="#FFFFFF"
-                  >
-                    접지선 (FOLD {idx + 1})
-                  </text>
-                </g>
-              );
-            })}
-
-          {/* X-Banner Corner Grommets (타공 아일렛 위치 표시) */}
-          {preset.hasGrommets && (
-            <g>
-              {[
-                [75, 75],
-                [W - 75, 75],
-                [75, H - 75],
-                [W - 75, H - 75],
-              ].map(([gx, gy], idx) => (
-                <g key={idx}>
-                  <circle
-                    cx={gx}
-                    cy={gy}
-                    r={28}
-                    fill="rgba(239,68,68,0.18)"
-                    stroke="#EF4444"
-                    strokeWidth="4"
-                  />
-                  <circle cx={gx} cy={gy} r={10} fill="#EF4444" />
-                </g>
-              ))}
-            </g>
-          )}
         </g>
       )}
     </svg>
   );
-};
+}
