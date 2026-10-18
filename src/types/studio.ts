@@ -95,3 +95,18 @@ export interface ExportOptions {
   quality: number;
   transparentBg: boolean;
 }
+
+// Non-speaker agenda slots (breaks, lunch, networking, etc.) shown only on the timetable
+export type AgendaCustomKind = 'break' | 'lunch' | 'networking' | 'registration' | 'custom';
+
+export interface AgendaCustomItem {
+  id: string;
+  kind: AgendaCustomKind;
+  title: string;
+  time: string;
+  room: string;
+  // '' = spans every track; otherwise the track name it belongs to
+  track: string;
+}
+
+export type TimetableLayoutMode = 'single' | 'tracks';

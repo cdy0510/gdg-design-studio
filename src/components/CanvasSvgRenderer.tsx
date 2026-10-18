@@ -2,13 +2,21 @@
 
 import React from 'react';
 import {
+  AgendaCustomItem,
   AssetMode,
   DevFestColorway,
   DevFestEventMeta,
   SpeakerSessionItem,
   SpeakerTemplateVariant,
+  TimetableLayoutMode,
   TimetableTemplateVariant,
 } from '@/types/studio';
+import {
+  AgendaEntry,
+  AgendaTimeSlot,
+  buildAgendaEntries,
+  buildTrackSlots,
+} from '@/utils/agenda';
 
 interface CanvasSvgRendererProps {
   svgRef?: React.RefObject<SVGSVGElement | null>;
@@ -21,6 +29,9 @@ interface CanvasSvgRendererProps {
   activeSpeaker: SpeakerSessionItem;
   sessions: SpeakerSessionItem[];
   eventMeta: DevFestEventMeta;
+  customItems?: AgendaCustomItem[];
+  timetableLayout?: TimetableLayoutMode;
+  tracks?: string[];
 }
 
 /**
@@ -861,6 +872,9 @@ export default function CanvasSvgRenderer({
   activeSpeaker,
   sessions,
   eventMeta,
+  customItems = [],
+  timetableLayout = 'single',
+  tracks = [],
 }: CanvasSvgRendererProps) {
   const W = Math.max(320, width);
   const H = Math.max(320, height);
@@ -1865,16 +1879,561 @@ export default function CanvasSvgRenderer({
     const innerBottomY = cardY + cardH - cutBLH - Math.round(20 * u);
     const availH = Math.max(160, innerBottomY - innerTopY);
 
-    // Decide 1-column vs 2-column layout based on aspect ratio, variant, and session count
-    const useTwoCols =
-      (timetableVariant === 'agenda-print' && sessions.length > 3 && aspect >= 0.68) ||
-      (isWide && sessions.length > 3);
-
-    const cols = useTwoCols ? 2 : 1;
-    const rowsPerCol = Math.max(1, Math.ceil(sessions.length / cols));
+    const agendaEntries = buildAgendaEntries(sessions, customItems);
     const colGap = Math.round(36 * u);
-    const colW = cols === 2 ? (innerW - colGap) / 2 : innerW;
-    const rowH = availH / rowsPerCol;
+    const bandFill = isDarkCanvas ? '#f1f3f4' : colorway.canvasBg;
+
+    // One speaker session row (time · track/room, title, description, speaker)
+    const renderSessionRow = (
+      item: SpeakerSessionItem,
+      index: number,
+      sx: number,
+      sy: number,
+      colW: number,
+      rowH: number,
+      rowIdx: number
+    ) => {
+      const compactRow = rowH < 120 * u;
+      const avatarSize = compactRow ? 0 : Math.min(62 * u, rowH * 0.44);
+      const textOffsetX = avatarSize > 0 ? avatarSize + 18 * u : 0;
+      const availTextW = Math.max(120 * u, colW - textOffsetX - 8 * u);
+
+      const baseTitleFs = Math.min(24 * u, Math.max(15 * u, rowH * 0.17));
+      const baseTimeFs = Math.min(18.5 * u, Math.max(13 * u, rowH * 0.13));
+      const baseMetaFs = Math.min(16.5 * u, Math.max(12 * u, rowH * 0.118));
+      const baseDescFs = Math.min(15.5 * u, Math.max(11.5 * u, rowH * 0.11));
+
+      const trackRoomStr = [item.track, item.room].filter(Boolean).join(' · ');
+      const speakerStr = `${item.name}${item.affiliation ? ` · ${item.affiliation}` : ''}${
+        item.role ? ` (${item.role})` : ''
+      }`;
+
+      // Helper to compute wrapped lines & total vertical height for a given font scale
+      const computeLayout = (scale: number) => {
+        const titleFs = baseTitleFs * scale;
+        const timeFs = baseTimeFs * scale;
+        const metaFs = baseMetaFs * scale;
+        const descFs = baseDescFs * scale;
+        const trackFs = metaFs * 0.92;
+
+        const timeW = estimateTextWidthPx(item.time, timeFs, true) + 12 * u;
+        const inlineTrackAvailW = availTextW - timeW;
+        const trackInline = inlineTrackAvailW >= 110 * u;
+
+        const trackLines = trackRoomStr
+          ? wrapTextToWidth(
+              trackRoomStr,
+              trackInline ? inlineTrackAvailW : availTextW,
+              trackFs,
+              { isMono: true, maxLines: 2 }
+            )
+          : [];
+
+        const titleLines = wrapTextToWidth(item.title, availTextW, titleFs, {
+          isMono: false,
+          maxLines: compactRow ? 2 : 3,
+        });
+
+        const descLines =
+          !compactRow && rowH >= 135 * u && item.description
+            ? wrapTextToWidth(item.description, availTextW, descFs, {
+                isMono: false,
+                maxLines: 2,
+              })
+            : [];
+
+        const speakerLines = wrapTextToWidth(speakerStr, availTextW, metaFs, {
+          isMono: true,
+          maxLines: 3,
+        });
+
+        const timeLineH = timeFs * 1.22;
+        const trackLineH = trackFs * 1.22;
+        const headerBlockH = trackInline
+          ? Math.max(timeLineH, trackLines.length * trackLineH)
+          : timeLineH + trackLines.length * trackLineH;
+
+        const titleLineH = titleFs * 1.22;
+        const descLineH = descFs * 1.24;
+        const speakerLineH = metaFs * 1.22;
+
+        const totalH =
+          headerBlockH +
+          4 * u * scale +
+          titleLines.length * titleLineH +
+          (descLines.length > 0 ? 4 * u * scale + descLines.length * descLineH : 0) +
+          5 * u * scale +
+          speakerLines.length * speakerLineH;
+
+        return {
+          titleFs,
+          timeFs,
+          metaFs,
+          descFs,
+          trackFs,
+          timeW,
+          trackInline,
+          trackLines,
+          titleLines,
+          descLines,
+          speakerLines,
+          timeLineH,
+          trackLineH,
+          headerBlockH,
+          titleLineH,
+          descLineH,
+          speakerLineH,
+          totalH,
+        };
+      };
+
+      let layout = computeLayout(1);
+      const maxRowContentH = Math.max(60 * u, rowH - 16 * u);
+      if (layout.totalH > maxRowContentH) {
+        const fitScale = Math.max(0.72, maxRowContentH / layout.totalH);
+        layout = computeLayout(fitScale);
+      }
+
+      let curY = 0;
+      const timeY = curY + layout.timeFs;
+      const trackStartX = layout.trackInline ? layout.timeW : 0;
+      const trackStartY = layout.trackInline
+        ? curY + layout.trackFs
+        : curY + layout.timeLineH + layout.trackFs;
+
+      curY += layout.headerBlockH + 4 * u;
+      const titleStartY = curY;
+      curY += layout.titleLines.length * layout.titleLineH;
+
+      const descStartY = curY + 3 * u;
+      if (layout.descLines.length > 0) {
+        curY = descStartY + layout.descLines.length * layout.descLineH;
+      }
+
+      const speakerStartY = curY + 5 * u;
+
+      const clipAvatarId = `agenda-avatar-${item.id}-${index}`;
+
+      return (
+        <g key={item.id || index} transform={`translate(${sx.toFixed(1)}, ${sy.toFixed(1)})`}>
+          {/* Top border separator for rows after the first in each column */}
+          {rowIdx > 0 && (
+            <line
+              x1={0}
+              y1={-10 * u}
+              x2={colW}
+              y2={-10 * u}
+              stroke="#e2e5e9"
+              strokeWidth={Math.max(1, sw * 0.55)}
+            />
+          )}
+
+          {/* Optional Speaker Circular Avatar */}
+          {avatarSize > 0 && item.photoDataUrl && (
+            <g transform={`translate(0, ${4 * u})`}>
+              <defs>
+                <clipPath id={clipAvatarId}>
+                  <rect
+                    x={0}
+                    y={0}
+                    width={avatarSize}
+                    height={avatarSize}
+                    rx={14 * u}
+                  />
+                </clipPath>
+              </defs>
+              <g clipPath={`url(#${clipAvatarId})`}>
+                <rect
+                  x={0}
+                  y={0}
+                  width={avatarSize}
+                  height={avatarSize}
+                  fill="#e8eef7"
+                />
+                <image
+                  href={item.photoDataUrl}
+                  x={0}
+                  y={0}
+                  width={avatarSize}
+                  height={avatarSize}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </g>
+              <rect
+                x={0}
+                y={0}
+                width={avatarSize}
+                height={avatarSize}
+                rx={14 * u}
+                fill="none"
+                stroke={colorway.ink}
+                strokeWidth={sw * 0.75}
+              />
+            </g>
+          )}
+
+          <g transform={`translate(${textOffsetX.toFixed(1)}, 0)`}>
+            {/* Time in DevFest Monospace Accent */}
+            <text
+              x={0}
+              y={timeY}
+              fill={colorway.timeAccent}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={layout.timeFs}
+              fontWeight={700}
+            >
+              {item.time}
+            </text>
+
+            {/* Track & Room Badge (wrapped if long) */}
+            {layout.trackLines.map((line, tIdx) => (
+              <text
+                key={tIdx}
+                x={trackStartX}
+                y={trackStartY + tIdx * layout.trackLineH}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={layout.trackFs}
+                fontWeight={600}
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Session Title (wrapped across lines) */}
+            {layout.titleLines.map((line, lIdx) => (
+              <text
+                key={lIdx}
+                x={0}
+                y={titleStartY + (lIdx + 0.84) * layout.titleLineH}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={layout.titleFs}
+                fontWeight={800}
+                letterSpacing="-0.02em"
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Session Description (wrapped across lines) */}
+            {layout.descLines.map((line, dIdx) => (
+              <text
+                key={dIdx}
+                x={0}
+                y={descStartY + (dIdx + 0.84) * layout.descLineH}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={layout.descFs}
+                fontWeight={500}
+              >
+                {line}
+              </text>
+            ))}
+
+            {/* Speaker Name & Affiliation in Monospace (#595959) - wrapped across lines */}
+            {layout.speakerLines.map((line, sIdx) => (
+              <text
+                key={sIdx}
+                x={0}
+                y={speakerStartY + (sIdx + 0.84) * layout.speakerLineH}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={layout.metaFs}
+                fontWeight={600}
+              >
+                {line}
+              </text>
+            ))}
+          </g>
+        </g>
+      );
+    };
+
+    // Break / lunch / networking etc. — a filled band instead of a speaker row
+    const renderCustomBand = (
+      entry: Extract<AgendaEntry, { kind: 'custom' }>,
+      bx: number,
+      by: number,
+      bw: number,
+      bh: number,
+      showTime: boolean
+    ) => {
+      const fontSize = Math.min(22 * u, Math.max(12 * u, bh * 0.42), bw * 0.07);
+      const timeSize = fontSize * 0.82;
+      const timeW = showTime ? Math.min(150 * u, bw * 0.34) : 0;
+      const titleLine =
+        wrapTextToWidth(entry.item.title, bw - timeW - 32 * u, fontSize, { maxLines: 1 })[0] || '';
+      const roomText = entry.item.room?.trim();
+      const cy = by + bh / 2;
+      return (
+        <g key={`band-${entry.id}`}>
+          <rect
+            x={bx}
+            y={by}
+            width={bw}
+            height={bh}
+            rx={Math.min(14 * u, bh / 2)}
+            fill={bandFill}
+            stroke={colorway.ink}
+            strokeWidth={sw * 0.7}
+            strokeDasharray={entry.item.kind === 'custom' ? undefined : `${6 * u} ${4 * u}`}
+          />
+          {showTime && (
+            <text
+              x={bx + 16 * u}
+              y={cy + timeSize * 0.35}
+              fill={colorway.timeAccent}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={timeSize}
+              fontWeight={700}
+            >
+              {entry.item.time}
+            </text>
+          )}
+          <text
+            x={bx + 16 * u + timeW}
+            y={cy + fontSize * 0.35}
+            fill={colorway.ink}
+            fontFamily="'Google Sans', 'Pretendard', sans-serif"
+            fontSize={fontSize}
+            fontWeight={800}
+            letterSpacing="-0.01em"
+          >
+            {titleLine}
+          </text>
+          {roomText && bw > 360 * u && (
+            <text
+              x={bx + bw - 16 * u}
+              y={cy + timeSize * 0.35}
+              textAnchor="end"
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={timeSize * 0.9}
+              fontWeight={600}
+            >
+              {roomText}
+            </text>
+          )}
+        </g>
+      );
+    };
+
+    // Single list: sessions + custom bands sorted by time, 1 or 2 columns split by weight
+    const renderSingleList = () => {
+      const sessionCount = agendaEntries.filter((e) => e.kind === 'session').length;
+      const useTwoCols =
+        (timetableVariant === 'agenda-print' && sessionCount > 3 && aspect >= 0.68) ||
+        (isWide && sessionCount > 3);
+      const cols = useTwoCols ? 2 : 1;
+      const colW = cols === 2 ? (innerW - colGap) / 2 : innerW;
+      const weightOf = (e: AgendaEntry) => (e.kind === 'custom' ? 0.5 : 1);
+      const totalWeight = agendaEntries.reduce((sum, e) => sum + weightOf(e), 0);
+
+      const columns: AgendaEntry[][] = [[]];
+      let acc = 0;
+      for (const e of agendaEntries) {
+        if (cols === 2 && columns.length === 1 && acc >= totalWeight / 2) columns.push([]);
+        columns[columns.length - 1].push(e);
+        acc += weightOf(e);
+      }
+      const maxColWeight = Math.max(
+        1,
+        ...columns.map((c) => c.reduce((sum, e) => sum + weightOf(e), 0))
+      );
+      const unitH = availH / maxColWeight;
+
+      return columns.map((colEntries, colIdx) => {
+        const sx = innerX + colIdx * (colW + colGap);
+        let cursorY = innerTopY;
+        return colEntries.map((entry, rowIdx) => {
+          const h = unitH * weightOf(entry);
+          const y = cursorY;
+          cursorY += h;
+          if (entry.kind === 'custom') {
+            return renderCustomBand(entry, sx, y + 2 * u, colW, h - 14 * u, true);
+          }
+          return renderSessionRow(
+            entry.session,
+            sessions.indexOf(entry.session),
+            sx,
+            y,
+            colW,
+            h,
+            rowIdx
+          );
+        });
+      });
+    };
+
+    // Multi-track grid: time column + one column per track, all-track items as full-width bands
+    const renderTrackGrid = () => {
+      const trackNames = tracks.length > 0 ? tracks : [''];
+      const slots = buildTrackSlots(agendaEntries, trackNames);
+      const timeColW = Math.min(118 * u, innerW * 0.17);
+      const cellGap = Math.round(10 * u);
+      const headerH = Math.round(42 * u);
+      const gridX = innerX + timeColW;
+      const gridW = innerW - timeColW;
+      const cellW = (gridW - cellGap * (trackNames.length - 1)) / trackNames.length;
+      const weightOf = (s: AgendaTimeSlot) => (s.band ? 0.5 : 1);
+      const totalWeight = Math.max(1, slots.reduce((sum, s) => sum + weightOf(s), 0));
+      const unitH = (availH - headerH - 8 * u) / totalWeight;
+
+      const timeSize = Math.min(18 * u, Math.max(11 * u, unitH * 0.16), timeColW * 0.16);
+      const titleSize = Math.min(20 * u, Math.max(11 * u, unitH * 0.2), cellW * 0.085);
+      const metaSize = titleSize * 0.78;
+
+      const renderCell = (entry: AgendaEntry, cx: number, cy: number, cw: number, ch: number) => {
+        if (entry.kind === 'custom') {
+          return renderCustomBand(entry, cx, cy, cw, ch, false);
+        }
+        const s = entry.session;
+        const metaLineH = metaSize * 1.3;
+        const titleLineH = titleSize * 1.22;
+        const maxTitleLines = Math.max(1, Math.floor((ch - 20 * u - metaLineH * 2) / titleLineH));
+        const titleLines = wrapTextToWidth(s.title, cw - 20 * u, titleSize, {
+          maxLines: Math.min(4, maxTitleLines),
+        });
+        const speakerLine = `${s.name}${s.affiliation ? ` · ${s.affiliation}` : ''}`;
+        return (
+          <g key={`cell-${entry.id}`}>
+            <rect
+              x={cx}
+              y={cy}
+              width={cw}
+              height={ch}
+              rx={12 * u}
+              fill={colorway.cardSurface}
+              stroke={colorway.ink}
+              strokeWidth={sw * 0.6}
+            />
+            {titleLines.map((line, i) => (
+              <text
+                key={i}
+                x={cx + 10 * u}
+                y={cy + 10 * u + (i + 1) * titleLineH - titleSize * 0.2}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={titleSize}
+                fontWeight={800}
+                letterSpacing="-0.02em"
+              >
+                {line}
+              </text>
+            ))}
+            <text
+              x={cx + 10 * u}
+              y={cy + 10 * u + titleLines.length * titleLineH + metaLineH}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={metaSize}
+              fontWeight={600}
+            >
+              {wrapTextToWidth(speakerLine, cw - 20 * u, metaSize, { isMono: true, maxLines: 1 })[0]}
+            </text>
+            {s.room && ch > titleLines.length * titleLineH + metaLineH * 2 + 16 * u && (
+              <text
+                x={cx + 10 * u}
+                y={cy + 10 * u + titleLines.length * titleLineH + metaLineH * 2}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={metaSize * 0.9}
+                fontWeight={500}
+              >
+                {wrapTextToWidth(s.room, cw - 20 * u, metaSize * 0.9, { isMono: true, maxLines: 1 })[0]}
+              </text>
+            )}
+          </g>
+        );
+      };
+
+      let cursorY = innerTopY + headerH + 8 * u;
+      return (
+        <g>
+          {/* Track header pills */}
+          {trackNames.map((name, i) => {
+            const hx = gridX + i * (cellW + cellGap);
+            const pillSize = Math.min(16 * u, cellW * 0.07);
+            return (
+              <g key={`track-h-${i}`}>
+                <rect
+                  x={hx}
+                  y={innerTopY}
+                  width={cellW}
+                  height={headerH}
+                  rx={headerH / 2}
+                  fill={colorway.locationPillBg}
+                  stroke={colorway.ink}
+                  strokeWidth={sw * 0.7}
+                />
+                <text
+                  x={hx + cellW / 2}
+                  y={innerTopY + headerH / 2 + pillSize * 0.36}
+                  textAnchor="middle"
+                  fill={colorway.locationPillText}
+                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                  fontSize={pillSize}
+                  fontWeight={700}
+                >
+                  {wrapTextToWidth(name || 'Track', cellW - 20 * u, pillSize, { isMono: true, maxLines: 1 })[0]}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Vertical track dividers (drawn first so all-track bands sit on top) */}
+          {trackNames.slice(1).map((_, i) => {
+            const lx = gridX + (i + 1) * (cellW + cellGap) - cellGap / 2;
+            return (
+              <line
+                key={`track-divider-${i}`}
+                x1={lx}
+                y1={innerTopY + headerH + 4 * u}
+                x2={lx}
+                y2={innerTopY + headerH + 8 * u + unitH * totalWeight - cellGap}
+                stroke={colorway.ink}
+                strokeOpacity={0.35}
+                strokeWidth={Math.max(1, sw * 0.6)}
+                strokeDasharray={`${5 * u} ${4 * u}`}
+              />
+            );
+          })}
+
+          {slots.map((slot, sIdx) => {
+            const rowH = unitH * weightOf(slot);
+            const y = cursorY;
+            cursorY += rowH;
+            const innerRowH = rowH - cellGap;
+            return (
+              <g key={`slot-${sIdx}`}>
+                <text
+                  x={innerX}
+                  y={y + Math.min(innerRowH / 2, timeSize * 1.4) + timeSize * 0.35}
+                  fill={colorway.timeAccent}
+                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                  fontSize={timeSize}
+                  fontWeight={700}
+                >
+                  {(slot.time.match(/\d{1,2}\s*:\s*\d{2}/) || [slot.time])[0]}
+                </text>
+                {slot.band
+                  ? slot.band.kind === 'custom' &&
+                    renderCustomBand(slot.band, gridX, y, gridW, innerRowH, false)
+                  : trackNames.map((name, tIdx) => {
+                      const cellEntries = slot.cells[name] || [];
+                      const cx = gridX + tIdx * (cellW + cellGap);
+                      const subH = (innerRowH - cellGap * (cellEntries.length - 1)) / Math.max(1, cellEntries.length);
+                      return cellEntries.map((entry, eIdx) =>
+                        renderCell(entry, cx, y + eIdx * (subH + cellGap), cellW, subH)
+                      );
+                    })}
+              </g>
+            );
+          })}
+        </g>
+      );
+    };
 
     // Wrap top-left tab subtext so it stays inside the tab width
     const tabInnerW = Math.max(140 * u, tabW - 60 * u);
@@ -1963,269 +2522,8 @@ export default function CanvasSvgRenderer({
           ))}
         </g>
 
-        {/* Session List Inside Stepped White Card */}
-        {sessions.map((item, index) => {
-          const colIdx = cols === 2 ? Math.floor(index / rowsPerCol) : 0;
-          const rowIdx = cols === 2 ? index % rowsPerCol : index;
-          const sx = innerX + colIdx * (colW + colGap);
-          const sy = innerTopY + rowIdx * rowH;
-
-          const compactRow = rowH < 120 * u;
-          const avatarSize = compactRow ? 0 : Math.min(62 * u, rowH * 0.44);
-          const textOffsetX = avatarSize > 0 ? avatarSize + 18 * u : 0;
-          const availTextW = Math.max(120 * u, colW - textOffsetX - 8 * u);
-
-          const baseTitleFs = Math.min(24 * u, Math.max(15 * u, rowH * 0.17));
-          const baseTimeFs = Math.min(18.5 * u, Math.max(13 * u, rowH * 0.13));
-          const baseMetaFs = Math.min(16.5 * u, Math.max(12 * u, rowH * 0.118));
-          const baseDescFs = Math.min(15.5 * u, Math.max(11.5 * u, rowH * 0.11));
-
-          const trackRoomStr = [item.track, item.room].filter(Boolean).join(' · ');
-          const speakerStr = `${item.name}${item.affiliation ? ` · ${item.affiliation}` : ''}${
-            item.role ? ` (${item.role})` : ''
-          }`;
-
-          // Helper to compute wrapped lines & total vertical height for a given font scale
-          const computeLayout = (scale: number) => {
-            const titleFs = baseTitleFs * scale;
-            const timeFs = baseTimeFs * scale;
-            const metaFs = baseMetaFs * scale;
-            const descFs = baseDescFs * scale;
-            const trackFs = metaFs * 0.92;
-
-            const timeW = estimateTextWidthPx(item.time, timeFs, true) + 12 * u;
-            const inlineTrackAvailW = availTextW - timeW;
-            const trackInline = inlineTrackAvailW >= 110 * u;
-
-            const trackLines = trackRoomStr
-              ? wrapTextToWidth(
-                  trackRoomStr,
-                  trackInline ? inlineTrackAvailW : availTextW,
-                  trackFs,
-                  { isMono: true, maxLines: 2 }
-                )
-              : [];
-
-            const titleLines = wrapTextToWidth(item.title, availTextW, titleFs, {
-              isMono: false,
-              maxLines: compactRow ? 2 : 3,
-            });
-
-            const descLines =
-              !compactRow && rowH >= 135 * u && item.description
-                ? wrapTextToWidth(item.description, availTextW, descFs, {
-                    isMono: false,
-                    maxLines: 2,
-                  })
-                : [];
-
-            const speakerLines = wrapTextToWidth(speakerStr, availTextW, metaFs, {
-              isMono: true,
-              maxLines: 3,
-            });
-
-            const timeLineH = timeFs * 1.22;
-            const trackLineH = trackFs * 1.22;
-            const headerBlockH = trackInline
-              ? Math.max(timeLineH, trackLines.length * trackLineH)
-              : timeLineH + trackLines.length * trackLineH;
-
-            const titleLineH = titleFs * 1.22;
-            const descLineH = descFs * 1.24;
-            const speakerLineH = metaFs * 1.22;
-
-            const totalH =
-              headerBlockH +
-              4 * u * scale +
-              titleLines.length * titleLineH +
-              (descLines.length > 0 ? 4 * u * scale + descLines.length * descLineH : 0) +
-              5 * u * scale +
-              speakerLines.length * speakerLineH;
-
-            return {
-              titleFs,
-              timeFs,
-              metaFs,
-              descFs,
-              trackFs,
-              timeW,
-              trackInline,
-              trackLines,
-              titleLines,
-              descLines,
-              speakerLines,
-              timeLineH,
-              trackLineH,
-              headerBlockH,
-              titleLineH,
-              descLineH,
-              speakerLineH,
-              totalH,
-            };
-          };
-
-          let layout = computeLayout(1);
-          const maxRowContentH = Math.max(60 * u, rowH - 16 * u);
-          if (layout.totalH > maxRowContentH) {
-            const fitScale = Math.max(0.72, maxRowContentH / layout.totalH);
-            layout = computeLayout(fitScale);
-          }
-
-          let curY = 0;
-          const timeY = curY + layout.timeFs;
-          const trackStartX = layout.trackInline ? layout.timeW : 0;
-          const trackStartY = layout.trackInline
-            ? curY + layout.trackFs
-            : curY + layout.timeLineH + layout.trackFs;
-
-          curY += layout.headerBlockH + 4 * u;
-          const titleStartY = curY;
-          curY += layout.titleLines.length * layout.titleLineH;
-
-          const descStartY = curY + 3 * u;
-          if (layout.descLines.length > 0) {
-            curY = descStartY + layout.descLines.length * layout.descLineH;
-          }
-
-          const speakerStartY = curY + 5 * u;
-
-          const clipAvatarId = `agenda-avatar-${item.id}-${index}`;
-
-          return (
-            <g key={item.id || index} transform={`translate(${sx.toFixed(1)}, ${sy.toFixed(1)})`}>
-              {/* Top border separator for rows after the first in each column */}
-              {rowIdx > 0 && (
-                <line
-                  x1={0}
-                  y1={-10 * u}
-                  x2={colW}
-                  y2={-10 * u}
-                  stroke="#e2e5e9"
-                  strokeWidth={Math.max(1, sw * 0.55)}
-                />
-              )}
-
-              {/* Optional Speaker Circular Avatar */}
-              {avatarSize > 0 && item.photoDataUrl && (
-                <g transform={`translate(0, ${4 * u})`}>
-                  <defs>
-                    <clipPath id={clipAvatarId}>
-                      <rect
-                        x={0}
-                        y={0}
-                        width={avatarSize}
-                        height={avatarSize}
-                        rx={14 * u}
-                      />
-                    </clipPath>
-                  </defs>
-                  <g clipPath={`url(#${clipAvatarId})`}>
-                    <rect
-                      x={0}
-                      y={0}
-                      width={avatarSize}
-                      height={avatarSize}
-                      fill="#e8eef7"
-                    />
-                    <image
-                      href={item.photoDataUrl}
-                      x={0}
-                      y={0}
-                      width={avatarSize}
-                      height={avatarSize}
-                      preserveAspectRatio="xMidYMid slice"
-                    />
-                  </g>
-                  <rect
-                    x={0}
-                    y={0}
-                    width={avatarSize}
-                    height={avatarSize}
-                    rx={14 * u}
-                    fill="none"
-                    stroke={colorway.ink}
-                    strokeWidth={sw * 0.75}
-                  />
-                </g>
-              )}
-
-              <g transform={`translate(${textOffsetX.toFixed(1)}, 0)`}>
-                {/* Time in DevFest Monospace Accent */}
-                <text
-                  x={0}
-                  y={timeY}
-                  fill={colorway.timeAccent}
-                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                  fontSize={layout.timeFs}
-                  fontWeight={700}
-                >
-                  {item.time}
-                </text>
-
-                {/* Track & Room Badge (wrapped if long) */}
-                {layout.trackLines.map((line, tIdx) => (
-                  <text
-                    key={tIdx}
-                    x={trackStartX}
-                    y={trackStartY + tIdx * layout.trackLineH}
-                    fill={colorway.mutedInk}
-                    fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                    fontSize={layout.trackFs}
-                    fontWeight={600}
-                  >
-                    {line}
-                  </text>
-                ))}
-
-                {/* Session Title (wrapped across lines) */}
-                {layout.titleLines.map((line, lIdx) => (
-                  <text
-                    key={lIdx}
-                    x={0}
-                    y={titleStartY + (lIdx + 0.84) * layout.titleLineH}
-                    fill={colorway.ink}
-                    fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                    fontSize={layout.titleFs}
-                    fontWeight={800}
-                    letterSpacing="-0.02em"
-                  >
-                    {line}
-                  </text>
-                ))}
-
-                {/* Session Description (wrapped across lines) */}
-                {layout.descLines.map((line, dIdx) => (
-                  <text
-                    key={dIdx}
-                    x={0}
-                    y={descStartY + (dIdx + 0.84) * layout.descLineH}
-                    fill={colorway.mutedInk}
-                    fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                    fontSize={layout.descFs}
-                    fontWeight={500}
-                  >
-                    {line}
-                  </text>
-                ))}
-
-                {/* Speaker Name & Affiliation in Monospace (#595959) - wrapped across lines */}
-                {layout.speakerLines.map((line, sIdx) => (
-                  <text
-                    key={sIdx}
-                    x={0}
-                    y={speakerStartY + (sIdx + 0.84) * layout.speakerLineH}
-                    fill={colorway.mutedInk}
-                    fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                    fontSize={layout.metaFs}
-                    fontWeight={600}
-                  >
-                    {line}
-                  </text>
-                ))}
-              </g>
-            </g>
-          );
-        })}
+        {/* Agenda Body: single sorted list or multi-track grid */}
+        {timetableLayout === 'tracks' ? renderTrackGrid() : renderSingleList()}
 
         {/* Bottom-Left Cutout on Canvas: GDG `< >` Logo + 3-Circle Caterpillar Blob */}
         <GdgBracketLogo

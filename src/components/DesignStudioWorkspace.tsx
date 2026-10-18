@@ -10,6 +10,8 @@ import {
   SIZE_PRESETS,
 } from '@/data/presets';
 import {
+  AgendaCustomItem,
+  AgendaCustomKind,
   AssetMode,
   DevFestColorwayId,
   DevFestEventMeta,
@@ -17,8 +19,14 @@ import {
   PhotoFilterType,
   SpeakerSessionItem,
   SpeakerTemplateVariant,
+  TimetableLayoutMode,
   TimetableTemplateVariant,
 } from '@/types/studio';
+import {
+  AGENDA_CUSTOM_KIND_META,
+  buildAgendaEntries,
+  resolveTrackList,
+} from '@/utils/agenda';
 import { downloadSampleXlsx, parseUploadedSpeakerExcel } from '@/utils/excel';
 import { exportSvgElement } from '@/utils/exportAsset';
 
@@ -55,6 +63,15 @@ export function DesignStudioWorkspace() {
     INITIAL_SPEAKER_SESSIONS[0].id
   );
   const [excelStatusMsg, setExcelStatusMsg] = useState<string | null>(null);
+  // Drag-to-reorder: index being dragged & drop insertion point (0..length)
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  // 3-1. Timetable-only slots (breaks, lunch, networking) & track layout
+  const [customItems, setCustomItems] = useState<AgendaCustomItem[]>([]);
+  const [timetableLayout, setTimetableLayout] = useState<TimetableLayoutMode>('single');
+  const [trackOrder, setTrackOrder] = useState<string[]>([]);
+  const [newTrackName, setNewTrackName] = useState<string>('');
 
   // 4. Event Header Metadata
   const [eventMeta, setEventMeta] = useState<DevFestEventMeta>(INITIAL_EVENT_META);
@@ -70,6 +87,8 @@ export function DesignStudioWorkspace() {
 
   const activeSpeaker =
     sessions.find((s) => s.id === selectedSpeakerId) || sessions[0];
+
+  const tracks = resolveTrackList(trackOrder, sessions);
 
   // Apply numeric W x H and reflow template when clicking "Generate"
   const handleGenerateBySize = (e?: React.FormEvent) => {
@@ -295,6 +314,25 @@ export function DesignStudioWorkspace() {
     setSelectedSpeakerId(newItem.id);
   };
 
+  // Moves the dragged speaker so it lands before position `insertAt`.
+  // Time slots stay with list positions, so speakers take over the slot they land on
+  // and the timetable order follows the list order.
+  const handleReorderSpeaker = (from: number, insertAt: number) => {
+    const to = insertAt > from ? insertAt - 1 : insertAt;
+    if (to === from) return;
+    setSessions((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next.map((s, i) => ({ ...s, time: prev[i].time }));
+    });
+  };
+
+  const resetDragState = () => {
+    setDragIndex(null);
+    setDropIndex(null);
+  };
+
   const handleDeleteSpeakerRow = (id: string) => {
     if (sessions.length <= 1) return;
     const remaining = sessions.filter((s) => s.id !== id);
@@ -302,6 +340,75 @@ export function DesignStudioWorkspace() {
     if (selectedSpeakerId === id) {
       setSelectedSpeakerId(remaining[0].id);
     }
+  };
+
+  // ---- Timetable custom slots ----
+  const formatMinutes = (mins: number) =>
+    `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+  const handleAddCustomItem = (kind: AgendaCustomKind) => {
+    // Default the new slot right after the latest end time on the agenda
+    const latestEnd = buildAgendaEntries(sessions, customItems).reduce((max, e) => {
+      const times = e.time.match(/\d{1,2}\s*:\s*\d{2}/g) || [];
+      const last = times[times.length - 1];
+      if (!last) return max;
+      const [h, m] = last.split(':').map((v) => parseInt(v, 10));
+      return Math.max(max, h * 60 + m);
+    }, 12 * 60);
+    const duration = kind === 'lunch' ? 60 : kind === 'networking' ? 30 : 10;
+    const meta = AGENDA_CUSTOM_KIND_META[kind];
+    setCustomItems((prev) => [
+      ...prev,
+      {
+        id: `custom-${Date.now()}`,
+        kind,
+        title: meta.defaultTitle,
+        time: `${formatMinutes(latestEnd)} - ${formatMinutes(latestEnd + duration)}`,
+        room: '',
+        track: '',
+      },
+    ]);
+  };
+
+  const updateCustomItem = (id: string, patch: Partial<AgendaCustomItem>) => {
+    setCustomItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  };
+
+  const deleteCustomItem = (id: string) => {
+    setCustomItems((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  // ---- Track management ----
+  const handleAddTrack = () => {
+    const name = newTrackName.trim();
+    if (!name || tracks.includes(name)) return;
+    setTrackOrder([...tracks, name]);
+    setNewTrackName('');
+  };
+
+  const handleRenameTrack = (oldName: string, rawName: string) => {
+    const name = rawName.trim();
+    if (!name || name === oldName || tracks.includes(name)) return;
+    setTrackOrder(tracks.map((t) => (t === oldName ? name : t)));
+    setSessions((prev) =>
+      prev.map((s) => (s.track.trim() === oldName ? { ...s, track: name } : s))
+    );
+    setCustomItems((prev) =>
+      prev.map((c) => (c.track === oldName ? { ...c, track: name } : c))
+    );
+  };
+
+  const handleMoveTrack = (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= tracks.length) return;
+    const next = [...tracks];
+    [next[index], next[target]] = [next[target], next[index]];
+    setTrackOrder(next);
+  };
+
+  const handleDeleteTrack = (name: string) => {
+    setTrackOrder(tracks.filter((t) => t !== name));
+    setCustomItems((prev) => prev.map((c) => (c.track === name ? { ...c, track: '' } : c)));
   };
 
   // Export current SVG canvas
@@ -539,23 +646,68 @@ export function DesignStudioWorkspace() {
             </div>
 
             {/* Speaker Selector List */}
-            <div className="max-h-48 overflow-y-auto flex flex-col gap-1.5 pr-1">
+            <div
+              className="max-h-48 overflow-y-auto flex flex-col gap-1.5 pr-1"
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropIndex(null);
+              }}
+            >
               {sessions.map((spk, idx) => {
                 const isSelected = spk.id === activeSpeaker?.id;
+                const isDragging = dragIndex === idx;
+                const showLineBefore = dragIndex !== null && dropIndex === idx;
+                const showLineAfter =
+                  dragIndex !== null && idx === sessions.length - 1 && dropIndex === sessions.length;
                 return (
                   <div
                     key={spk.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', spk.id);
+                      setDragIndex(idx);
+                    }}
+                    onDragOver={(e) => {
+                      if (dragIndex === null) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const after = e.clientY > rect.top + rect.height / 2;
+                      setDropIndex(after ? idx + 1 : idx);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null && dropIndex !== null) {
+                        handleReorderSpeaker(dragIndex, dropIndex);
+                      }
+                      resetDragState();
+                    }}
+                    onDragEnd={resetDragState}
                     onClick={() => setSelectedSpeakerId(spk.id)}
-                    className={`flex items-center justify-between p-2 rounded-lg border-[1.5px] cursor-pointer transition-colors ${
+                    className={`relative flex items-center justify-between p-2 rounded-lg border-[1.5px] cursor-pointer transition-colors ${
                       isSelected
                         ? 'bg-[#ffe7a5] border-[#1e1e1e] font-bold'
                         : 'bg-[#f8f9fa] border-transparent hover:border-[#1e1e1e]'
-                    }`}
+                    } ${isDragging ? 'opacity-40' : ''}`}
                   >
+                    {/* Drop insertion indicator */}
+                    {showLineBefore && (
+                      <span className="pointer-events-none absolute -top-[5px] left-1 right-1 h-[3px] rounded-full bg-[#4285f4]" />
+                    )}
+                    {showLineAfter && (
+                      <span className="pointer-events-none absolute -bottom-[5px] left-1 right-1 h-[3px] rounded-full bg-[#4285f4]" />
+                    )}
                     <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        title="드래그하여 순서 변경"
+                        className="text-[#595959] font-mono text-xs leading-none cursor-grab active:cursor-grabbing select-none shrink-0"
+                      >
+                        ⋮⋮
+                      </span>
                       <img
                         src={spk.photoDataUrl}
                         alt={spk.name}
+                        draggable={false}
                         className="w-9 h-9 rounded-md object-cover border border-[#1e1e1e] bg-white shrink-0"
                       />
                       <div className="min-w-0">
@@ -660,12 +812,18 @@ export function DesignStudioWorkspace() {
                     </label>
                     <input
                       type="text"
+                      list="studio-track-options"
                       value={activeSpeaker.track}
                       onChange={(e) =>
                         updateActiveSpeaker({ track: e.target.value })
                       }
                       className="w-full px-2 py-1.5 text-xs bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e] rounded-md font-mono"
                     />
+                    <datalist id="studio-track-options">
+                      {tracks.map((t) => (
+                        <option key={t} value={t} />
+                      ))}
+                    </datalist>
                   </div>
                   <div>
                     <label className="block text-[11px] font-mono font-semibold text-[#595959] mb-0.5">
@@ -783,6 +941,199 @@ export function DesignStudioWorkspace() {
               </div>
             )}
           </section>
+          {/* Card 2-1: Timetable Composition (custom slots & tracks) — timetable mode only */}
+          {mode === 'timetable' && (
+            <section className="bg-white border-2 border-[#1e1e1e] rounded-xl p-4 shadow-[3px_3px_0px_#1e1e1e] flex flex-col gap-3">
+              <h2 className="font-extrabold text-sm tracking-tight flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#ffd427] border border-[#1e1e1e]" />
+                시간표 구성 (커스텀 세션 & 트랙)
+              </h2>
+
+              {/* Layout Mode Toggle */}
+              <div className="grid grid-cols-2 gap-1.5 bg-[#f0f0f0] p-1 rounded-lg border-[1.5px] border-[#1e1e1e]">
+                {(
+                  [
+                    { id: 'single', label: '단일 리스트' },
+                    { id: 'tracks', label: `트랙별 분할 (${tracks.length})` },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTimetableLayout(opt.id)}
+                    className={`py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+                      timetableLayout === opt.id
+                        ? 'bg-[#1e1e1e] text-white'
+                        : 'text-[#1e1e1e] hover:bg-black/5'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Track Manager */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-mono font-bold text-[#595959]">
+                  트랙 목록 (이름 변경 시 연사 트랙도 함께 변경)
+                </label>
+                {tracks.map((t, idx) => {
+                  const usedCount = sessions.filter((s) => s.track.trim() === t).length;
+                  return (
+                    <div key={t} className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        defaultValue={t}
+                        onBlur={(e) => {
+                          handleRenameTrack(t, e.target.value);
+                          e.target.value = t;
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 text-xs font-mono bg-[#f8f9fa] border border-[#1e1e1e] rounded"
+                      />
+                      <span className="text-[10px] font-mono text-[#595959] w-9 text-right shrink-0">
+                        {usedCount}개
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveTrack(idx, -1)}
+                        disabled={idx === 0}
+                        title="왼쪽으로"
+                        className="px-1.5 py-0.5 text-xs font-mono border border-[#1e1e1e]/40 rounded cursor-pointer disabled:opacity-30"
+                      >
+                        ←
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveTrack(idx, 1)}
+                        disabled={idx === tracks.length - 1}
+                        title="오른쪽으로"
+                        className="px-1.5 py-0.5 text-xs font-mono border border-[#1e1e1e]/40 rounded cursor-pointer disabled:opacity-30"
+                      >
+                        →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTrack(t)}
+                        disabled={usedCount > 0}
+                        title={usedCount > 0 ? '연사가 배정된 트랙은 삭제할 수 없습니다' : '트랙 삭제'}
+                        className="px-1.5 py-0.5 text-xs font-mono text-[#595959] hover:text-[#ea4335] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={newTrackName}
+                    onChange={(e) => setNewTrackName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddTrack();
+                    }}
+                    placeholder="새 트랙 이름"
+                    className="flex-1 min-w-0 px-2 py-1 text-xs font-mono bg-white border border-dashed border-[#1e1e1e] rounded"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddTrack}
+                    className="px-2.5 py-1 bg-[#f0f0f0] hover:bg-[#ffd427] text-xs font-bold border-[1.5px] border-[#1e1e1e] rounded-md cursor-pointer"
+                  >
+                    + 트랙
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Slots */}
+              <div className="pt-3 border-t-[1.5px] border-[#1e1e1e]/15 flex flex-col gap-2">
+                <label className="text-[11px] font-mono font-bold text-[#595959]">
+                  커스텀 세션 추가 (쉬는시간 · 점심 · 네트워킹 등)
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(Object.keys(AGENDA_CUSTOM_KIND_META) as AgendaCustomKind[]).map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => handleAddCustomItem(kind)}
+                      className="px-2 py-1 bg-[#f0f0f0] hover:bg-[#ccf6c5] text-[11px] font-bold border-[1.5px] border-[#1e1e1e] rounded-md cursor-pointer"
+                    >
+                      {AGENDA_CUSTOM_KIND_META[kind].emoji} {AGENDA_CUSTOM_KIND_META[kind].label}
+                    </button>
+                  ))}
+                </div>
+
+                {customItems.length === 0 ? (
+                  <p className="text-[11px] text-[#595959]">
+                    추가한 항목은 시간 순서에 맞춰 시간표에 자동 배치됩니다.
+                  </p>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto flex flex-col gap-1.5 pr-1">
+                    {customItems.map((c) => (
+                      <div
+                        key={c.id}
+                        className="p-2 rounded-lg bg-[#f8f9fa] border-[1.5px] border-[#1e1e1e]/30 flex flex-col gap-1.5"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm shrink-0">
+                            {AGENDA_CUSTOM_KIND_META[c.kind].emoji}
+                          </span>
+                          <input
+                            type="text"
+                            value={c.title}
+                            onChange={(e) => updateCustomItem(c.id, { title: e.target.value })}
+                            aria-label="커스텀 세션 제목"
+                            className="flex-1 min-w-0 px-2 py-1 text-xs font-semibold bg-white border border-[#1e1e1e] rounded"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => deleteCustomItem(c.id)}
+                            title="삭제"
+                            className="px-1.5 py-0.5 text-xs text-[#595959] hover:text-[#ea4335] font-mono cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <input
+                            type="text"
+                            value={c.time}
+                            onChange={(e) => updateCustomItem(c.id, { time: e.target.value })}
+                            placeholder="12:00 - 13:00"
+                            aria-label="시간"
+                            className="px-2 py-1 text-[11px] font-mono bg-white border border-[#1e1e1e] rounded"
+                          />
+                          <input
+                            type="text"
+                            value={c.room}
+                            onChange={(e) => updateCustomItem(c.id, { room: e.target.value })}
+                            placeholder="장소 (선택)"
+                            aria-label="장소"
+                            className="px-2 py-1 text-[11px] font-mono bg-white border border-[#1e1e1e] rounded"
+                          />
+                          <select
+                            value={c.track}
+                            onChange={(e) => updateCustomItem(c.id, { track: e.target.value })}
+                            aria-label="적용 트랙"
+                            className="px-1.5 py-1 text-[11px] font-mono bg-white border border-[#1e1e1e] rounded cursor-pointer"
+                          >
+                            <option value="">전체 트랙</option>
+                            {tracks.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
         </aside>
 
         {/* ----------------------------------------------------------------- */}
@@ -848,6 +1199,9 @@ export function DesignStudioWorkspace() {
                 activeSpeaker={activeSpeaker}
                 sessions={sessions}
                 eventMeta={eventMeta}
+                customItems={customItems}
+                timetableLayout={timetableLayout}
+                tracks={tracks}
               />
             </div>
           </div>
