@@ -82,49 +82,124 @@ function buildOrthogonalRoundedPath(
 }
 
 /**
- * Simple line-wrapping helper for SVG text elements.
- * Supports Korean + English mixed strings by estimating character width units.
+ * Estimates the rendered pixel width of a string in SVG for Korean + English mixed text.
  */
-function wrapTextLines(
+function estimateTextWidthPx(
   text: string,
-  maxUnitsPerLine: number,
-  maxLines: number
-): string[] {
-  if (!text) return [];
-  const words = text.trim().split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = '';
-  let currentUnits = 0;
-
-  const charUnits = (str: string) => {
-    let total = 0;
-    for (const ch of str) {
-      total += ch.charCodeAt(0) > 255 ? 1.75 : 1.0;
-    }
-    return total;
-  };
-
-  for (const word of words) {
-    const wUnits = charUnits(word);
-    if (!currentLine) {
-      currentLine = word;
-      currentUnits = wUnits;
-    } else if (currentUnits + 1 + wUnits <= maxUnitsPerLine) {
-      currentLine += ` ${word}`;
-      currentUnits += 1 + wUnits;
+  fontSize: number,
+  isMono = false
+): number {
+  if (!text) return 0;
+  let units = 0;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code > 255) {
+      // CJK / Korean syllables & wide symbols
+      units += isMono ? 1.05 : 0.96;
+    } else if (ch === ' ') {
+      units += isMono ? 0.6 : 0.32;
+    } else if ('.,:;!|Iijl\'`"()[]{}'.includes(ch)) {
+      units += isMono ? 0.62 : 0.36;
+    } else if (ch >= 'A' && ch <= 'Z') {
+      units += isMono ? 0.64 : 0.68;
     } else {
-      lines.push(currentLine);
-      currentLine = word;
-      currentUnits = wUnits;
+      units += isMono ? 0.62 : 0.56;
     }
   }
-  if (currentLine) {
-    lines.push(currentLine);
+  return units * fontSize;
+}
+
+/**
+ * Pixel-accurate line-wrapping helper for SVG text elements.
+ * - Preserves explicit newline characters (\n)
+ * - Wraps words when exceeding maxWidthPx
+ * - Breaks overly long continuous tokens character-by-character so text never overflows horizontally
+ */
+function wrapTextToWidth(
+  text: string,
+  maxWidthPx: number,
+  fontSize: number,
+  options?: {
+    isMono?: boolean;
+    maxLines?: number;
+  }
+): string[] {
+  if (!text) return [];
+  const isMono = options?.isMono ?? false;
+  const maxLines = options?.maxLines ?? 10;
+  const safeMaxW = Math.max(fontSize * 2, maxWidthPx);
+
+  const paragraphs = text.split(/\r?\n/);
+  const lines: string[] = [];
+
+  const breakLongWord = (word: string): string[] => {
+    const chunks: string[] = [];
+    let chunk = '';
+    for (const ch of word) {
+      const next = chunk + ch;
+      if (chunk && estimateTextWidthPx(next, fontSize, isMono) > safeMaxW) {
+        chunks.push(chunk);
+        chunk = ch;
+      } else {
+        chunk = next;
+      }
+    }
+    if (chunk) chunks.push(chunk);
+    return chunks;
+  };
+
+  for (const rawPara of paragraphs) {
+    const trimmed = rawPara.trim();
+    if (!trimmed) continue;
+
+    const words = trimmed.split(/\s+/);
+    let currentLine = '';
+
+    for (const word of words) {
+      if (estimateTextWidthPx(word, fontSize, isMono) > safeMaxW) {
+        const subWords = breakLongWord(word);
+        for (const sub of subWords) {
+          if (!currentLine) {
+            currentLine = sub;
+          } else if (
+            estimateTextWidthPx(`${currentLine} ${sub}`, fontSize, isMono) <= safeMaxW
+          ) {
+            currentLine += ` ${sub}`;
+          } else {
+            lines.push(currentLine);
+            currentLine = sub;
+          }
+        }
+        continue;
+      }
+
+      if (!currentLine) {
+        currentLine = word;
+      } else if (
+        estimateTextWidthPx(`${currentLine} ${word}`, fontSize, isMono) <= safeMaxW
+      ) {
+        currentLine += ` ${word}`;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
   }
 
   if (lines.length > maxLines) {
     const sliced = lines.slice(0, maxLines);
-    sliced[maxLines - 1] = sliced[maxLines - 1].replace(/[.,\s]*$/, '') + '…';
+    let last = sliced[maxLines - 1].replace(/[.,\s]*$/, '');
+    while (
+      last.length > 1 &&
+      estimateTextWidthPx(`${last}…`, fontSize, isMono) > safeMaxW
+    ) {
+      last = last.slice(0, -1).trimEnd();
+    }
+    sliced[maxLines - 1] = `${last}…`;
     return sliced;
   }
 
@@ -834,9 +909,68 @@ export default function CanvasSvgRenderer({
 
       const cardY = photoY + photoH + Math.round(24 * u);
       const cardH = H - pad - cardY;
+      const innerCardW = photoW - 72 * u;
 
-      const titleLines = wrapTextLines(activeSpeaker.title, 24, 3);
-      const descLines = wrapTextLines(activeSpeaker.description, 34, 2);
+      const timeRoomStr = [activeSpeaker.time, activeSpeaker.room].filter(Boolean).join(' · ');
+      const badgeFontSize = 18 * u;
+      const badgeLines = wrapTextToWidth(timeRoomStr, innerCardW - 32 * u, badgeFontSize, {
+        isMono: true,
+        maxLines: 2,
+      });
+      const badgeH = (badgeLines.length * 24 + 14) * u;
+      const badgeW = Math.min(
+        innerCardW,
+        Math.max(
+          220 * u,
+          ...badgeLines.map((l) => estimateTextWidthPx(l, badgeFontSize, true) + 32 * u)
+        )
+      );
+
+      const nameFontSize = 46 * u;
+      const nameLines = wrapTextToWidth(activeSpeaker.name, innerCardW, nameFontSize, {
+        maxLines: 2,
+      });
+
+      const affilStr = [activeSpeaker.affiliation, activeSpeaker.role]
+        .filter(Boolean)
+        .join(' · ');
+      const affilFontSize = 20 * u;
+      const affilLines = wrapTextToWidth(affilStr, innerCardW, affilFontSize, {
+        isMono: true,
+        maxLines: 2,
+      });
+
+      const titleFontSize = 30 * u;
+      const titleLines = wrapTextToWidth(activeSpeaker.title, innerCardW, titleFontSize, {
+        maxLines: 3,
+      });
+
+      const descFontSize = 19.5 * u;
+      const descLines = wrapTextToWidth(activeSpeaker.description, innerCardW, descFontSize, {
+        maxLines: 3,
+      });
+
+      let curY = 0;
+      const badgeY = curY;
+      curY += badgeH + 14 * u;
+
+      const nameStartY = curY;
+      const nameLineH = 52 * u;
+      curY += nameLines.length * nameLineH + 4 * u;
+
+      const affilStartY = curY;
+      const affilLineH = 26 * u;
+      curY += affilLines.length * affilLineH + 16 * u;
+
+      const dividerY = curY;
+      curY += 16 * u;
+
+      const titleStartY = curY;
+      const titleLineH = 38 * u;
+      curY += titleLines.length * titleLineH + 10 * u;
+
+      const descStartY = curY;
+      const descLineH = 27 * u;
 
       return (
         <g>
@@ -918,62 +1052,69 @@ export default function CanvasSvgRenderer({
           />
 
           {/* Speaker Name + Affiliation + Track Pill */}
-          <g transform={`translate(${pad + 36 * u}, ${cardY + 48 * u})`}>
+          <g transform={`translate(${pad + 36 * u}, ${cardY + 42 * u})`}>
             {/* Time & Room Badge */}
             <rect
               x={0}
-              y={0}
-              width={Math.min(photoW - 72 * u, 420 * u)}
-              height={38 * u}
+              y={badgeY}
+              width={badgeW}
+              height={badgeH}
               rx={8 * u}
               fill={colorway.yearPillBg}
               stroke={colorway.ink}
               strokeWidth={sw * 0.85}
             />
-            <text
-              x={16 * u}
-              y={25 * u}
-              fill={colorway.ink}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={18 * u}
-              fontWeight={700}
-            >
-              {`${activeSpeaker.time} · ${activeSpeaker.room}`}
-            </text>
+            {badgeLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={16 * u}
+                y={badgeY + (25 + idx * 24) * u}
+                fill={colorway.ink}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={badgeFontSize}
+                fontWeight={700}
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Speaker Name */}
-            <text
-              x={0}
-              y={94 * u}
-              fill={colorway.ink}
-              fontFamily="'Google Sans', 'Pretendard', sans-serif"
-              fontSize={48 * u}
-              fontWeight={800}
-              letterSpacing="-0.03em"
-            >
-              {activeSpeaker.name}
-            </text>
+            {nameLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={nameStartY + (idx + 0.82) * nameLineH}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={nameFontSize}
+                fontWeight={800}
+                letterSpacing="-0.03em"
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Speaker Affiliation & Role */}
-            <text
-              x={0}
-              y={130 * u}
-              fill={colorway.mutedInk}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={21 * u}
-              fontWeight={600}
-            >
-              {[activeSpeaker.affiliation, activeSpeaker.role]
-                .filter(Boolean)
-                .join(' · ')}
-            </text>
+            {affilLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={affilStartY + (idx + 0.8) * affilLineH}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={affilFontSize}
+                fontWeight={600}
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Divider line */}
             <line
               x1={0}
-              y1={154 * u}
-              x2={photoW - 72 * u}
-              y2={154 * u}
+              y1={dividerY}
+              x2={innerCardW}
+              y2={dividerY}
               stroke={colorway.ink}
               strokeWidth={sw * 0.7}
               strokeDasharray={`${6 * u} ${6 * u}`}
@@ -984,10 +1125,10 @@ export default function CanvasSvgRenderer({
               <text
                 key={idx}
                 x={0}
-                y={(198 + idx * 40) * u}
+                y={titleStartY + (idx + 0.82) * titleLineH}
                 fill={colorway.ink}
                 fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                fontSize={31 * u}
+                fontSize={titleFontSize}
                 fontWeight={800}
                 letterSpacing="-0.02em"
               >
@@ -996,15 +1137,15 @@ export default function CanvasSvgRenderer({
             ))}
 
             {/* Session Description */}
-            {cardH > 340 * u &&
+            {cardH > 320 * u &&
               descLines.map((line, idx) => (
                 <text
                   key={idx}
                   x={0}
-                  y={(198 + titleLines.length * 40 + 18 + idx * 28) * u}
+                  y={descStartY + (idx + 0.82) * descLineH}
                   fill={colorway.mutedInk}
                   fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                  fontSize={20 * u}
+                  fontSize={descFontSize}
                   fontWeight={500}
                 >
                   {line}
@@ -1052,8 +1193,80 @@ export default function CanvasSvgRenderer({
       ];
       const photoPath = buildOrthogonalRoundedPath(photoPts, cornerR);
 
-      const titleLines = wrapTextLines(activeSpeaker.title, 22, 3);
-      const descLines = wrapTextLines(activeSpeaker.description, 30, 2);
+      const innerLeftW = leftW - 72 * u;
+      const leftCardH = H - pad * 2 - 170 * u;
+
+      const badgeStr = [activeSpeaker.track, activeSpeaker.time].filter(Boolean).join(' · ');
+      const badgeFontSize = 16 * u;
+      const badgeLines = wrapTextToWidth(badgeStr, innerLeftW - 28 * u, badgeFontSize, {
+        isMono: true,
+        maxLines: 2,
+      });
+      const badgeH = (badgeLines.length * 22 + 14) * u;
+      const badgeW = Math.min(
+        innerLeftW,
+        Math.max(
+          200 * u,
+          ...badgeLines.map((l) => estimateTextWidthPx(l, badgeFontSize, true) + 28 * u)
+        )
+      );
+
+      const nameFontSize = 44 * u;
+      const nameLines = wrapTextToWidth(activeSpeaker.name, innerLeftW, nameFontSize, {
+        maxLines: 2,
+      });
+
+      const affilStr = [activeSpeaker.affiliation, activeSpeaker.role]
+        .filter(Boolean)
+        .join(' · ');
+      const affilFontSize = 19 * u;
+      const affilLines = wrapTextToWidth(affilStr, innerLeftW, affilFontSize, {
+        isMono: true,
+        maxLines: 2,
+      });
+
+      const titleFontSize = 28 * u;
+      const titleLines = wrapTextToWidth(activeSpeaker.title, innerLeftW, titleFontSize, {
+        maxLines: 3,
+      });
+
+      const descFontSize = 18 * u;
+      const descLines = wrapTextToWidth(activeSpeaker.description, innerLeftW, descFontSize, {
+        maxLines: 3,
+      });
+
+      const footerStr = `📍 ${activeSpeaker.room}   |   ${eventMeta.dateVenueSubtext}`;
+      const footerFontSize = 16 * u;
+      const footerLines = wrapTextToWidth(footerStr, innerLeftW, footerFontSize, {
+        isMono: true,
+        maxLines: 2,
+      });
+
+      let curY = 0;
+      const badgeY = curY;
+      curY += badgeH + 14 * u;
+
+      const nameStartY = curY;
+      const nameLineH = 48 * u;
+      curY += nameLines.length * nameLineH + 4 * u;
+
+      const affilStartY = curY;
+      const affilLineH = 24 * u;
+      curY += affilLines.length * affilLineH + 18 * u;
+
+      const titleStartY = curY;
+      const titleLineH = 36 * u;
+      curY += titleLines.length * titleLineH + 10 * u;
+
+      const descStartY = curY;
+      const descLineH = 25 * u;
+
+      const footerLineH = 22 * u;
+      const footerBlockH = footerLines.length * footerLineH;
+      const footerStartY = Math.max(
+        descStartY + descLines.length * descLineH + 14 * u,
+        leftCardH - 76 * u - footerBlockH
+      );
 
       return (
         <g>
@@ -1108,72 +1321,79 @@ export default function CanvasSvgRenderer({
             x={pad}
             y={pad + 170 * u}
             width={leftW}
-            height={H - pad * 2 - 170 * u}
+            height={leftCardH}
             rx={cornerR}
             fill={colorway.cardSurface}
             stroke={colorway.ink}
             strokeWidth={sw}
           />
 
-          <g transform={`translate(${pad + 36 * u}, ${pad + 216 * u})`}>
+          <g transform={`translate(${pad + 36 * u}, ${pad + 206 * u})`}>
             {/* Track + Time Badge */}
             <rect
               x={0}
-              y={0}
-              width={Math.min(leftW - 72 * u, 380 * u)}
-              height={36 * u}
+              y={badgeY}
+              width={badgeW}
+              height={badgeH}
               rx={8 * u}
               fill={colorway.yearPillBg}
               stroke={colorway.ink}
               strokeWidth={sw * 0.85}
             />
-            <text
-              x={14 * u}
-              y={24 * u}
-              fill={colorway.ink}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={16 * u}
-              fontWeight={700}
-            >
-              {`${activeSpeaker.track} · ${activeSpeaker.time}`}
-            </text>
+            {badgeLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={14 * u}
+                y={badgeY + (23 + idx * 22) * u}
+                fill={colorway.ink}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={badgeFontSize}
+                fontWeight={700}
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Speaker Name */}
-            <text
-              x={0}
-              y={92 * u}
-              fill={colorway.ink}
-              fontFamily="'Google Sans', 'Pretendard', sans-serif"
-              fontSize={48 * u}
-              fontWeight={800}
-              letterSpacing="-0.03em"
-            >
-              {activeSpeaker.name}
-            </text>
+            {nameLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={nameStartY + (idx + 0.82) * nameLineH}
+                fill={colorway.ink}
+                fontFamily="'Google Sans', 'Pretendard', sans-serif"
+                fontSize={nameFontSize}
+                fontWeight={800}
+                letterSpacing="-0.03em"
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Affiliation & Role */}
-            <text
-              x={0}
-              y={128 * u}
-              fill={colorway.mutedInk}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={20 * u}
-              fontWeight={600}
-            >
-              {[activeSpeaker.affiliation, activeSpeaker.role]
-                .filter(Boolean)
-                .join(' · ')}
-            </text>
+            {affilLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={affilStartY + (idx + 0.8) * affilLineH}
+                fill={colorway.mutedInk}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={affilFontSize}
+                fontWeight={600}
+              >
+                {line}
+              </text>
+            ))}
 
             {/* Talk Title */}
             {titleLines.map((line, idx) => (
               <text
                 key={idx}
                 x={0}
-                y={(186 + idx * 38) * u}
+                y={titleStartY + (idx + 0.82) * titleLineH}
                 fill={colorway.ink}
                 fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                fontSize={29 * u}
+                fontSize={titleFontSize}
                 fontWeight={800}
                 letterSpacing="-0.02em"
               >
@@ -1186,10 +1406,10 @@ export default function CanvasSvgRenderer({
               <text
                 key={idx}
                 x={0}
-                y={(186 + titleLines.length * 38 + 16 + idx * 26) * u}
+                y={descStartY + (idx + 0.82) * descLineH}
                 fill={colorway.mutedInk}
                 fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                fontSize={18 * u}
+                fontSize={descFontSize}
                 fontWeight={500}
               >
                 {line}
@@ -1197,16 +1417,19 @@ export default function CanvasSvgRenderer({
             ))}
 
             {/* Venue Room Footer */}
-            <text
-              x={0}
-              y={H - pad * 2 - 245 * u}
-              fill={colorway.ink}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={17 * u}
-              fontWeight={700}
-            >
-              {`📍 ${activeSpeaker.room}   |   ${eventMeta.dateVenueSubtext}`}
-            </text>
+            {footerLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={0}
+                y={footerStartY + (idx + 0.82) * footerLineH}
+                fill={colorway.ink}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={footerFontSize}
+                fontWeight={700}
+              >
+                {line}
+              </text>
+            ))}
           </g>
 
           {/* Wireframe Globe behind bottom-left of photo */}
@@ -1248,11 +1471,11 @@ export default function CanvasSvgRenderer({
     // Matches speaker_sq_0.png & speaker_3x4_9x16_0.png & speaker_3x4_9x16_1.png
     // -------------------------------------------------------------------------
     const topHeaderH = Math.round(145 * u);
-    const infoCardH = Math.round(Math.max(255 * u, H * 0.27));
+    const infoCardH = Math.round(Math.max(275 * u, H * 0.29));
     const photoX = pad;
     const photoY = pad + topHeaderH - Math.round(28 * u);
     const photoW = W - pad * 2;
-    const photoH = Math.max(240, H - pad - infoCardH - Math.round(20 * u) - photoY);
+    const photoH = Math.max(220, H - pad - infoCardH - Math.round(20 * u) - photoY);
 
     // Top-left step cutout (so the 2026 pill / Location pill sits neatly above-left of the photo step)
     const stepTLW = Math.round(photoW * 0.34);
@@ -1274,8 +1497,59 @@ export default function CanvasSvgRenderer({
     const photoPath = buildOrthogonalRoundedPath(photoPts, cornerR);
 
     const cardY = photoY + photoH + Math.round(20 * u);
-    const titleLines = wrapTextLines(activeSpeaker.title, 28, 2);
-    const descLines = wrapTextLines(activeSpeaker.description, 38, 2);
+    const innerCardW = photoW - 64 * u;
+
+    const pillText = `${activeSpeaker.track} · ${activeSpeaker.time}`;
+    const pillFontSize = 15 * u;
+    const pillW = Math.min(
+      innerCardW * 0.52,
+      Math.max(210 * u, estimateTextWidthPx(pillText, pillFontSize, true) + 28 * u)
+    );
+    const pillLines = wrapTextToWidth(pillText, pillW - 20 * u, pillFontSize, {
+      isMono: true,
+      maxLines: 2,
+    });
+    const pillH = (pillLines.length * 20 + 16) * u;
+
+    const nameAvailW = innerCardW - pillW - 16 * u;
+    const nameFontSize = 36 * u;
+    const nameLines = wrapTextToWidth(activeSpeaker.name, nameAvailW, nameFontSize, {
+      maxLines: 2,
+    });
+
+    const affilStr = [activeSpeaker.affiliation, activeSpeaker.role, activeSpeaker.room]
+      .filter(Boolean)
+      .join(' · ');
+    const affilFontSize = 18 * u;
+    const affilLines = wrapTextToWidth(affilStr, innerCardW, affilFontSize, {
+      isMono: true,
+      maxLines: 2,
+    });
+
+    const titleFontSize = 25 * u;
+    const titleLines = wrapTextToWidth(activeSpeaker.title, innerCardW, titleFontSize, {
+      maxLines: 3,
+    });
+
+    const descFontSize = 17 * u;
+    const descLines = wrapTextToWidth(activeSpeaker.description, innerCardW, descFontSize, {
+      maxLines: 2,
+    });
+
+    // Calculate vertical flow inside Square/Portrait speaker info card
+    const nameBlockH = Math.max(nameLines.length * 40 * u, pillH);
+    const affilStartY = nameBlockH + 6 * u;
+    const affilLineH = 23 * u;
+    const dividerY = affilStartY + affilLines.length * affilLineH + 10 * u;
+    const titleStartY = dividerY + 12 * u;
+    const titleLineH = 31 * u;
+    const descStartY = titleStartY + titleLines.length * titleLineH + 6 * u;
+    const descLineH = 22 * u;
+    const totalContentH = descStartY + descLines.length * descLineH + 24 * u;
+    const contentScale =
+      totalContentH > infoCardH - 20 * u
+        ? Math.max(0.78, (infoCardH - 20 * u) / totalContentH)
+        : 1;
 
     return (
       <g>
@@ -1367,65 +1641,76 @@ export default function CanvasSvgRenderer({
           strokeWidth={sw}
         />
 
-        <g transform={`translate(${pad + 32 * u}, ${cardY + 38 * u})`}>
+        <g
+          transform={`translate(${(pad + 32 * u).toFixed(1)}, ${(cardY + 24 * u).toFixed(
+            1
+          )}) scale(${contentScale.toFixed(3)})`}
+        >
           {/* Speaker Name */}
-          <text
-            x={0}
-            y={18 * u}
-            fill={colorway.ink}
-            fontFamily="'Google Sans', 'Pretendard', sans-serif"
-            fontSize={38 * u}
-            fontWeight={800}
-            letterSpacing="-0.03em"
-          >
-            {activeSpeaker.name}
-          </text>
+          {nameLines.map((line, idx) => (
+            <text
+              key={idx}
+              x={0}
+              y={(idx + 0.82) * 40 * u}
+              fill={colorway.ink}
+              fontFamily="'Google Sans', 'Pretendard', sans-serif"
+              fontSize={nameFontSize}
+              fontWeight={800}
+              letterSpacing="-0.03em"
+            >
+              {line}
+            </text>
+          ))}
 
           {/* Track + Time Pill on the right of Speaker Name */}
-          <g transform={`translate(${photoW - 64 * u}, ${-12 * u})`}>
+          <g transform={`translate(${innerCardW / contentScale}, ${2 * u})`}>
             <rect
-              x={-260 * u}
+              x={-pillW}
               y={0}
-              width={260 * u}
-              height={36 * u}
+              width={pillW}
+              height={pillH}
               rx={8 * u}
               fill={colorway.yearPillBg}
               stroke={colorway.ink}
               strokeWidth={sw * 0.85}
             />
-            <text
-              x={-130 * u}
-              y={24 * u}
-              textAnchor="middle"
-              fill={colorway.ink}
-              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-              fontSize={15.5 * u}
-              fontWeight={700}
-            >
-              {`${activeSpeaker.track} · ${activeSpeaker.time}`}
-            </text>
+            {pillLines.map((line, idx) => (
+              <text
+                key={idx}
+                x={-pillW / 2}
+                y={(22 + idx * 20) * u}
+                textAnchor="middle"
+                fill={colorway.ink}
+                fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                fontSize={pillFontSize}
+                fontWeight={700}
+              >
+                {line}
+              </text>
+            ))}
           </g>
 
           {/* Speaker Affiliation & Role */}
-          <text
-            x={0}
-            y={50 * u}
-            fill={colorway.mutedInk}
-            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-            fontSize={19 * u}
-            fontWeight={600}
-          >
-            {[activeSpeaker.affiliation, activeSpeaker.role, activeSpeaker.room]
-              .filter(Boolean)
-              .join(' · ')}
-          </text>
+          {affilLines.map((line, idx) => (
+            <text
+              key={idx}
+              x={0}
+              y={affilStartY + (idx + 0.8) * affilLineH}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={affilFontSize}
+              fontWeight={600}
+            >
+              {line}
+            </text>
+          ))}
 
           {/* Divider */}
           <line
             x1={0}
-            y1={72 * u}
-            x2={photoW - 64 * u}
-            y2={72 * u}
+            y1={dividerY}
+            x2={innerCardW / contentScale}
+            y2={dividerY}
             stroke={colorway.ink}
             strokeWidth={sw * 0.65}
             strokeDasharray={`${5 * u} ${5 * u}`}
@@ -1436,10 +1721,10 @@ export default function CanvasSvgRenderer({
             <text
               key={idx}
               x={0}
-              y={(110 + idx * 34) * u}
+              y={titleStartY + (idx + 0.82) * titleLineH}
               fill={colorway.ink}
               fontFamily="'Google Sans', 'Pretendard', sans-serif"
-              fontSize={26.5 * u}
+              fontSize={titleFontSize}
               fontWeight={800}
               letterSpacing="-0.02em"
             >
@@ -1448,20 +1733,19 @@ export default function CanvasSvgRenderer({
           ))}
 
           {/* Session Description */}
-          {infoCardH >= 245 * u &&
-            descLines.slice(0, 1).map((line, idx) => (
-              <text
-                key={idx}
-                x={0}
-                y={(110 + titleLines.length * 34 + 6 + idx * 24) * u}
-                fill={colorway.mutedInk}
-                fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                fontSize={17.5 * u}
-                fontWeight={500}
-              >
-                {line}
-              </text>
-            ))}
+          {descLines.map((line, idx) => (
+            <text
+              key={idx}
+              x={0}
+              y={descStartY + (idx + 0.82) * descLineH}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans', 'Pretendard', sans-serif"
+              fontSize={descFontSize}
+              fontWeight={500}
+            >
+              {line}
+            </text>
+          ))}
         </g>
       </g>
     );
@@ -1505,9 +1789,9 @@ export default function CanvasSvgRenderer({
 
     // Content area inside the white stepped card
     const innerX = cardX + Math.round(38 * u);
-    const innerTopY = cardY + tabDropH + Math.round(34 * u);
+    const innerTopY = cardY + tabDropH + Math.round(30 * u);
     const innerW = cardW - Math.round(76 * u);
-    const innerBottomY = cardY + cardH - cutBLH - Math.round(24 * u);
+    const innerBottomY = cardY + cardH - cutBLH - Math.round(20 * u);
     const availH = Math.max(160, innerBottomY - innerTopY);
 
     // Decide 1-column vs 2-column layout based on aspect ratio, variant, and session count
@@ -1520,6 +1804,16 @@ export default function CanvasSvgRenderer({
     const colGap = Math.round(36 * u);
     const colW = cols === 2 ? (innerW - colGap) / 2 : innerW;
     const rowH = availH / rowsPerCol;
+
+    // Wrap top-left tab subtext so it stays inside the tab width
+    const tabInnerW = Math.max(140 * u, tabW - 60 * u);
+    const tabSubFontSize = 15.5 * u;
+    const tabSubLines = wrapTextToWidth(
+      eventMeta.dateVenueSubtext,
+      tabInnerW,
+      tabSubFontSize,
+      { isMono: true, maxLines: 2 }
+    );
 
     return (
       <g>
@@ -1569,28 +1863,31 @@ export default function CanvasSvgRenderer({
         />
 
         {/* Top-Left Tab Title: "Agenda" + Date/Venue */}
-        <g transform={`translate(${cardX + 38 * u}, ${cardY + 64 * u})`}>
+        <g transform={`translate(${cardX + 38 * u}, ${cardY + 60 * u})`}>
           <text
             x={0}
             y={0}
             fill={colorway.ink}
             fontFamily="'Google Sans', 'Pretendard', sans-serif"
-            fontSize={52 * u}
+            fontSize={50 * u}
             fontWeight={800}
             letterSpacing="-0.03em"
           >
             {eventMeta.agendaTitle || 'Agenda'}
           </text>
-          <text
-            x={0}
-            y={34 * u}
-            fill={colorway.mutedInk}
-            fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-            fontSize={16 * u}
-            fontWeight={600}
-          >
-            {eventMeta.dateVenueSubtext}
-          </text>
+          {tabSubLines.map((line, idx) => (
+            <text
+              key={idx}
+              x={0}
+              y={(30 + idx * 20) * u}
+              fill={colorway.mutedInk}
+              fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+              fontSize={tabSubFontSize}
+              fontWeight={600}
+            >
+              {line}
+            </text>
+          ))}
         </g>
 
         {/* Session List Inside Stepped White Card */}
@@ -1600,25 +1897,124 @@ export default function CanvasSvgRenderer({
           const sx = innerX + colIdx * (colW + colGap);
           const sy = innerTopY + rowIdx * rowH;
 
-          const compactRow = rowH < 130 * u;
-          const titleFontSize = Math.min(26 * u, Math.max(17 * u, rowH * 0.2));
-          const timeFontSize = Math.min(20 * u, Math.max(14 * u, rowH * 0.15));
-          const metaFontSize = Math.min(18 * u, Math.max(13 * u, rowH * 0.14));
+          const compactRow = rowH < 120 * u;
+          const avatarSize = compactRow ? 0 : Math.min(62 * u, rowH * 0.44);
+          const textOffsetX = avatarSize > 0 ? avatarSize + 18 * u : 0;
+          const availTextW = Math.max(120 * u, colW - textOffsetX - 8 * u);
 
-          const avatarSize = compactRow ? 0 : Math.min(64 * u, rowH * 0.48);
-          const textOffsetX = avatarSize > 0 ? avatarSize + 20 * u : 0;
-          const availTextW = colW - textOffsetX;
-          const maxCharsPerLine = Math.max(18, Math.floor(availTextW / (titleFontSize * 0.62)));
+          const baseTitleFs = Math.min(24 * u, Math.max(15 * u, rowH * 0.17));
+          const baseTimeFs = Math.min(18.5 * u, Math.max(13 * u, rowH * 0.13));
+          const baseMetaFs = Math.min(16.5 * u, Math.max(12 * u, rowH * 0.118));
+          const baseDescFs = Math.min(15.5 * u, Math.max(11.5 * u, rowH * 0.11));
 
-          const titleLines = wrapTextLines(
-            item.title,
-            maxCharsPerLine,
-            compactRow ? 1 : 2
-          );
-          const descLines =
-            !compactRow && rowH >= 155 * u
-              ? wrapTextLines(item.description, Math.floor(maxCharsPerLine * 1.25), 1)
+          const trackRoomStr = [item.track, item.room].filter(Boolean).join(' · ');
+          const speakerStr = `${item.name}${item.affiliation ? ` · ${item.affiliation}` : ''}${
+            item.role ? ` (${item.role})` : ''
+          }`;
+
+          // Helper to compute wrapped lines & total vertical height for a given font scale
+          const computeLayout = (scale: number) => {
+            const titleFs = baseTitleFs * scale;
+            const timeFs = baseTimeFs * scale;
+            const metaFs = baseMetaFs * scale;
+            const descFs = baseDescFs * scale;
+            const trackFs = metaFs * 0.92;
+
+            const timeW = estimateTextWidthPx(item.time, timeFs, true) + 12 * u;
+            const inlineTrackAvailW = availTextW - timeW;
+            const trackInline = inlineTrackAvailW >= 110 * u;
+
+            const trackLines = trackRoomStr
+              ? wrapTextToWidth(
+                  trackRoomStr,
+                  trackInline ? inlineTrackAvailW : availTextW,
+                  trackFs,
+                  { isMono: true, maxLines: 2 }
+                )
               : [];
+
+            const titleLines = wrapTextToWidth(item.title, availTextW, titleFs, {
+              isMono: false,
+              maxLines: compactRow ? 2 : 3,
+            });
+
+            const descLines =
+              !compactRow && rowH >= 135 * u && item.description
+                ? wrapTextToWidth(item.description, availTextW, descFs, {
+                    isMono: false,
+                    maxLines: 2,
+                  })
+                : [];
+
+            const speakerLines = wrapTextToWidth(speakerStr, availTextW, metaFs, {
+              isMono: true,
+              maxLines: 3,
+            });
+
+            const timeLineH = timeFs * 1.22;
+            const trackLineH = trackFs * 1.22;
+            const headerBlockH = trackInline
+              ? Math.max(timeLineH, trackLines.length * trackLineH)
+              : timeLineH + trackLines.length * trackLineH;
+
+            const titleLineH = titleFs * 1.22;
+            const descLineH = descFs * 1.24;
+            const speakerLineH = metaFs * 1.22;
+
+            const totalH =
+              headerBlockH +
+              4 * u * scale +
+              titleLines.length * titleLineH +
+              (descLines.length > 0 ? 4 * u * scale + descLines.length * descLineH : 0) +
+              5 * u * scale +
+              speakerLines.length * speakerLineH;
+
+            return {
+              titleFs,
+              timeFs,
+              metaFs,
+              descFs,
+              trackFs,
+              timeW,
+              trackInline,
+              trackLines,
+              titleLines,
+              descLines,
+              speakerLines,
+              timeLineH,
+              trackLineH,
+              headerBlockH,
+              titleLineH,
+              descLineH,
+              speakerLineH,
+              totalH,
+            };
+          };
+
+          let layout = computeLayout(1);
+          const maxRowContentH = Math.max(60 * u, rowH - 16 * u);
+          if (layout.totalH > maxRowContentH) {
+            const fitScale = Math.max(0.72, maxRowContentH / layout.totalH);
+            layout = computeLayout(fitScale);
+          }
+
+          let curY = 0;
+          const timeY = curY + layout.timeFs;
+          const trackStartX = layout.trackInline ? layout.timeW : 0;
+          const trackStartY = layout.trackInline
+            ? curY + layout.trackFs
+            : curY + layout.timeLineH + layout.trackFs;
+
+          curY += layout.headerBlockH + 4 * u;
+          const titleStartY = curY;
+          curY += layout.titleLines.length * layout.titleLineH;
+
+          const descStartY = curY + 3 * u;
+          if (layout.descLines.length > 0) {
+            curY = descStartY + layout.descLines.length * layout.descLineH;
+          }
+
+          const speakerStartY = curY + 5 * u;
 
           const clipAvatarId = `agenda-avatar-${item.id}-${index}`;
 
@@ -1628,9 +2024,9 @@ export default function CanvasSvgRenderer({
               {rowIdx > 0 && (
                 <line
                   x1={0}
-                  y1={-8 * u}
+                  y1={-10 * u}
                   x2={colW}
-                  y2={-8 * u}
+                  y2={-10 * u}
                   stroke="#e2e5e9"
                   strokeWidth={Math.max(1, sw * 0.55)}
                 />
@@ -1638,7 +2034,7 @@ export default function CanvasSvgRenderer({
 
               {/* Optional Speaker Circular Avatar */}
               {avatarSize > 0 && item.photoDataUrl && (
-                <g transform={`translate(0, ${10 * u})`}>
+                <g transform={`translate(0, ${4 * u})`}>
                   <defs>
                     <clipPath id={clipAvatarId}>
                       <rect
@@ -1681,39 +2077,42 @@ export default function CanvasSvgRenderer({
               )}
 
               <g transform={`translate(${textOffsetX.toFixed(1)}, 0)`}>
-                {/* Time in DevFest Monospace Accent + Track/Room Pill */}
+                {/* Time in DevFest Monospace Accent */}
                 <text
                   x={0}
-                  y={timeFontSize + 4 * u}
+                  y={timeY}
                   fill={colorway.timeAccent}
                   fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                  fontSize={timeFontSize}
+                  fontSize={layout.timeFs}
                   fontWeight={700}
                 >
                   {item.time}
                 </text>
 
-                {/* Track & Room Badge */}
-                <text
-                  x={155 * u}
-                  y={timeFontSize + 4 * u}
-                  fill={colorway.mutedInk}
-                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                  fontSize={metaFontSize * 0.92}
-                  fontWeight={600}
-                >
-                  {[item.track, item.room].filter(Boolean).join(' · ')}
-                </text>
+                {/* Track & Room Badge (wrapped if long) */}
+                {layout.trackLines.map((line, tIdx) => (
+                  <text
+                    key={tIdx}
+                    x={trackStartX}
+                    y={trackStartY + tIdx * layout.trackLineH}
+                    fill={colorway.mutedInk}
+                    fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                    fontSize={layout.trackFs}
+                    fontWeight={600}
+                  >
+                    {line}
+                  </text>
+                ))}
 
-                {/* Session Title */}
-                {titleLines.map((line, lIdx) => (
+                {/* Session Title (wrapped across lines) */}
+                {layout.titleLines.map((line, lIdx) => (
                   <text
                     key={lIdx}
                     x={0}
-                    y={timeFontSize + 8 * u + (lIdx + 1) * (titleFontSize * 1.24)}
+                    y={titleStartY + (lIdx + 0.84) * layout.titleLineH}
                     fill={colorway.ink}
                     fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                    fontSize={titleFontSize}
+                    fontSize={layout.titleFs}
                     fontWeight={800}
                     letterSpacing="-0.02em"
                   >
@@ -1721,45 +2120,35 @@ export default function CanvasSvgRenderer({
                   </text>
                 ))}
 
-                {/* Optional 1-line Description */}
-                {descLines.map((line, dIdx) => (
+                {/* Session Description (wrapped across lines) */}
+                {layout.descLines.map((line, dIdx) => (
                   <text
                     key={dIdx}
                     x={0}
-                    y={
-                      timeFontSize +
-                      12 * u +
-                      titleLines.length * (titleFontSize * 1.24) +
-                      (dIdx + 1) * (metaFontSize * 1.2)
-                    }
+                    y={descStartY + (dIdx + 0.84) * layout.descLineH}
                     fill={colorway.mutedInk}
                     fontFamily="'Google Sans', 'Pretendard', sans-serif"
-                    fontSize={metaFontSize * 0.95}
+                    fontSize={layout.descFs}
                     fontWeight={500}
                   >
                     {line}
                   </text>
                 ))}
 
-                {/* Speaker Name & Affiliation in Monospace (#595959) */}
-                <text
-                  x={0}
-                  y={
-                    timeFontSize +
-                    14 * u +
-                    titleLines.length * (titleFontSize * 1.24) +
-                    descLines.length * (metaFontSize * 1.2) +
-                    metaFontSize * 1.2
-                  }
-                  fill={colorway.mutedInk}
-                  fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
-                  fontSize={metaFontSize}
-                  fontWeight={600}
-                >
-                  {`${item.name}${item.affiliation ? ` · ${item.affiliation}` : ''}${
-                    item.role ? ` (${item.role})` : ''
-                  }`}
-                </text>
+                {/* Speaker Name & Affiliation in Monospace (#595959) - wrapped across lines */}
+                {layout.speakerLines.map((line, sIdx) => (
+                  <text
+                    key={sIdx}
+                    x={0}
+                    y={speakerStartY + (sIdx + 0.84) * layout.speakerLineH}
+                    fill={colorway.mutedInk}
+                    fontFamily="'Google Sans Mono', 'JetBrains Mono', monospace"
+                    fontSize={layout.metaFs}
+                    fontWeight={600}
+                  >
+                    {line}
+                  </text>
+                ))}
               </g>
             </g>
           );
