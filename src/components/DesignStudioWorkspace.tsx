@@ -34,7 +34,7 @@ export function DesignStudioWorkspace() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const excelInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
-  const batchPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const photoTargetIdRef = useRef<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const devfestLogoInputRef = useRef<HTMLInputElement | null>(null);
   const gdgLogoInputRef = useRef<HTMLInputElement | null>(null);
@@ -159,75 +159,30 @@ export function DesignStudioWorkspace() {
     }
   };
 
-  // Active speaker profile photo upload
-  const handleSpeakerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeSpeaker) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        updateActiveSpeaker({
-          photoDataUrl: reader.result,
-          photoScale: 1,
-          photoOffsetX: 0,
-          photoOffsetY: 0,
-        });
-      }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+  // Per-speaker profile photo upload (target set by openPhotoPicker)
+  const openPhotoPicker = (speakerId: string) => {
+    photoTargetIdRef.current = speakerId;
+    photoInputRef.current?.click();
   };
 
-  // Batch speaker photos upload (matches by speaker name in filename or sequential index)
-  const handleBatchPhotoUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-
-    const readAsDataUrl = (f: File) =>
-      new Promise<{ name: string; dataUrl: string }>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () =>
-          resolve({
-            name: f.name.replace(/\.[^.]+$/, '').normalize('NFC'),
-            dataUrl: typeof reader.result === 'string' ? reader.result : '',
-          });
-        reader.readAsDataURL(f);
-      });
-
-    const loaded = await Promise.all(files.map(readAsDataUrl));
-    let matchedCount = 0;
-
-    setSessions((prev) =>
-      prev.map((spk, idx) => {
-        const normalizedSpkName = spk.name.normalize('NFC').trim();
-        const byName = loaded.find(
-          (item) =>
-            normalizedSpkName &&
-            (item.name.includes(normalizedSpkName) ||
-              normalizedSpkName.includes(item.name))
-        );
-        const chosen = byName || loaded[idx];
-        if (chosen && chosen.dataUrl) {
-          matchedCount++;
-          return {
-            ...spk,
-            photoDataUrl: chosen.dataUrl,
-            photoScale: 1,
-            photoOffsetX: 0,
-            photoOffsetY: 0,
-          };
-        }
-        return spk;
-      })
-    );
-
-    setExcelStatusMsg(
-      `✓ 프로필 사진 ${matchedCount}장을 연사자 목록에 매칭했습니다.`
-    );
+  const handleSpeakerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const targetId = photoTargetIdRef.current;
     e.target.value = '';
+    if (!file || !targetId) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') return;
+      const photoDataUrl = reader.result;
+      setSessions((prev) =>
+        prev.map((spk) =>
+          spk.id === targetId
+            ? { ...spk, photoDataUrl, photoScale: 1, photoOffsetX: 0, photoOffsetY: 0 }
+            : spk
+        )
+      );
+    };
+    reader.readAsDataURL(file);
   };
 
   // Custom chapter/sponsor logo upload
@@ -596,31 +551,14 @@ export function DesignStudioWorkspace() {
               onChange={handleExcelUpload}
               className="hidden"
             />
-            <input
-              ref={batchPhotoInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleBatchPhotoUpload}
-              className="hidden"
-            />
 
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => excelInputRef.current?.click()}
-                className="py-2.5 px-3 bg-[#f0f0f0] hover:bg-[#ffe7a5] text-[#1e1e1e] font-bold text-xs rounded-lg border-[1.5px] border-dashed border-[#1e1e1e] transition-colors cursor-pointer text-center"
-              >
-                📄 연사 목록 (.xlsx / .csv) 업로드
-              </button>
-              <button
-                type="button"
-                onClick={() => batchPhotoInputRef.current?.click()}
-                className="py-2.5 px-3 bg-[#f0f0f0] hover:bg-[#ccf6c5] text-[#1e1e1e] font-bold text-xs rounded-lg border-[1.5px] border-dashed border-[#1e1e1e] transition-colors cursor-pointer text-center"
-              >
-                🖼️ 프로필 사진 일괄 매칭 업로드
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => excelInputRef.current?.click()}
+              className="w-full py-2.5 px-3 bg-[#f0f0f0] hover:bg-[#ffe7a5] text-[#1e1e1e] font-bold text-xs rounded-lg border-[1.5px] border-dashed border-[#1e1e1e] transition-colors cursor-pointer text-center"
+            >
+              📄 연사 목록 (.xlsx / .csv) 업로드
+            </button>
 
             {excelStatusMsg && (
               <div className="mt-2.5 px-3 py-1.5 bg-[#ccf6c5] border border-[#1e1e1e] rounded-md text-xs font-mono font-semibold text-[#1e1e1e]">
@@ -644,6 +582,14 @@ export function DesignStudioWorkspace() {
                 + 연사 추가
               </button>
             </div>
+
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleSpeakerPhotoUpload}
+              className="hidden"
+            />
 
             {/* Speaker Selector List */}
             <div
@@ -704,12 +650,26 @@ export function DesignStudioWorkspace() {
                       >
                         ⋮⋮
                       </span>
-                      <img
-                        src={spk.photoDataUrl}
-                        alt={spk.name}
-                        draggable={false}
-                        className="w-9 h-9 rounded-md object-cover border border-[#1e1e1e] bg-white shrink-0"
-                      />
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setSelectedSpeakerId(spk.id);
+                          openPhotoPicker(spk.id);
+                        }}
+                        title={`${spk.name} 프로필 사진 업로드`}
+                        className="group relative w-9 h-9 shrink-0 rounded-md overflow-hidden border border-[#1e1e1e] bg-white cursor-pointer"
+                      >
+                        <img
+                          src={spk.photoDataUrl}
+                          alt={spk.name}
+                          draggable={false}
+                          className="w-full h-full object-cover"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e]/55 text-white text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                          📷
+                        </span>
+                      </button>
                       <div className="min-w-0">
                         <div className="text-xs font-bold truncate">
                           {idx + 1}. {spk.name}{' '}
@@ -747,16 +707,9 @@ export function DesignStudioWorkspace() {
                   <span className="text-xs font-extrabold">
                     선택된 연사 프로필 & 발표 정보 편집
                   </span>
-                  <input
-                    ref={photoInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleSpeakerPhotoUpload}
-                    className="hidden"
-                  />
                   <button
                     type="button"
-                    onClick={() => photoInputRef.current?.click()}
+                    onClick={() => openPhotoPicker(activeSpeaker.id)}
                     className="px-2.5 py-1 bg-[#5cdb6d] hover:bg-[#34a853] hover:text-white text-[#1e1e1e] font-bold text-xs rounded-md border-[1.5px] border-[#1e1e1e] transition-colors cursor-pointer"
                   >
                     📷 연사자 프로필 사진 업로드
