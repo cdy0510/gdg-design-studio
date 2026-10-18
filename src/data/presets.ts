@@ -383,4 +383,6 @@ export const INITIAL_EVENT_META: DevFestEventMeta = {
   showWireframeGlobe: true,
   showAsteriskSticker: true,
   showCropMarks: false,
+  devfestLogoScale: 1,
+  gdgLogoScale: 1,
 };

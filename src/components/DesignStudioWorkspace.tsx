@@ -28,6 +28,8 @@ export function DesignStudioWorkspace() {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const batchPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const devfestLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const gdgLogoInputRef = useRef<HTMLInputElement | null>(null);
 
   // 1. Canvas Size State: Draft numeric inputs vs. Generated canvas size
   const [inputWidth, setInputWidth] = useState<string>('800');
@@ -219,6 +221,42 @@ export function DesignStudioWorkspace() {
         setEventMeta((prev) => ({
           ...prev,
           customLogoDataUrl: reader.result as string,
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Custom DevFest Event Logo upload
+  const handleDevFestLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEventMeta((prev) => ({
+          ...prev,
+          devfestLogoDataUrl: reader.result as string,
+          devfestLogoScale: prev.devfestLogoScale ?? 1,
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Custom GDG Logo upload
+  const handleGdgLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEventMeta((prev) => ({
+          ...prev,
+          gdgLogoDataUrl: reader.result as string,
+          gdgLogoScale: prev.gdgLogoScale ?? 1,
         }));
       }
     };
@@ -1135,6 +1173,102 @@ export function DesignStudioWorkspace() {
                   />
                   <span>인쇄 재단선/타공선</span>
                 </label>
+              </div>
+
+              {/* DevFest / GDG Logo Replacement */}
+              <input
+                ref={devfestLogoInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleDevFestLogoUpload}
+                className="hidden"
+              />
+              <input
+                ref={gdgLogoInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleGdgLogoUpload}
+                className="hidden"
+              />
+              <div className="space-y-2 pt-2 border-t border-[#1e1e1e]/15">
+                {(
+                  [
+                    {
+                      label: 'DevFest 로고',
+                      url: eventMeta.devfestLogoDataUrl,
+                      scale: eventMeta.devfestLogoScale ?? 1,
+                      inputRef: devfestLogoInputRef,
+                      urlKey: 'devfestLogoDataUrl',
+                      scaleKey: 'devfestLogoScale',
+                    },
+                    {
+                      label: 'GDG 로고',
+                      url: eventMeta.gdgLogoDataUrl,
+                      scale: eventMeta.gdgLogoScale ?? 1,
+                      inputRef: gdgLogoInputRef,
+                      urlKey: 'gdgLogoDataUrl',
+                      scaleKey: 'gdgLogoScale',
+                    },
+                  ] as const
+                ).map((logo) => (
+                  <div key={logo.urlKey} className="flex items-center gap-2 text-[11px]">
+                    <span className="w-20 shrink-0 font-bold">{logo.label}</span>
+                    {logo.url ? (
+                      <img
+                        src={logo.url}
+                        alt={`${logo.label} 미리보기`}
+                        className="h-6 w-10 object-contain border border-[#1e1e1e]/20 rounded bg-white"
+                      />
+                    ) : (
+                      <span className="h-6 w-10 flex items-center justify-center text-[10px] text-[#1e1e1e]/50 border border-dashed border-[#1e1e1e]/30 rounded">
+                        기본
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => logo.inputRef.current?.click()}
+                      className="px-2 py-0.5 font-bold bg-[#f0f0f0] hover:bg-[#e2e5e9] border border-[#1e1e1e] rounded cursor-pointer"
+                    >
+                      {logo.url ? '교체' : '업로드'}
+                    </button>
+                    {logo.url && (
+                      <>
+                        <input
+                          type="range"
+                          min={0.5}
+                          max={2}
+                          step={0.05}
+                          value={logo.scale}
+                          onChange={(e) =>
+                            setEventMeta((m) => ({
+                              ...m,
+                              [logo.scaleKey]: Number(e.target.value),
+                            }))
+                          }
+                          className="flex-1 min-w-0 accent-[#1e1e1e]"
+                          aria-label={`${logo.label} 크기`}
+                        />
+                        <span className="font-mono w-9 text-right">
+                          {Math.round(logo.scale * 100)}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEventMeta((m) => ({
+                              ...m,
+                              [logo.urlKey]: undefined,
+                              [logo.scaleKey]: 1,
+                            }))
+                          }
+                          className="px-1.5 py-0.5 border border-[#1e1e1e]/40 rounded hover:bg-[#f0f0f0] cursor-pointer"
+                          aria-label={`${logo.label} 제거`}
+                        >
+                          ✕
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
 
               {/* Optional Custom Logo Upload + Export Scale */}

@@ -80,6 +80,10 @@ export interface DevFestEventMeta {
   showWireframeGlobe: boolean;
   showAsteriskSticker: boolean;
   showCropMarks: boolean;
+  devfestLogoDataUrl?: string;
+  devfestLogoScale?: number;
+  gdgLogoDataUrl?: string;
+  gdgLogoScale?: number;
   customLogoDataUrl?: string;
 }
 
